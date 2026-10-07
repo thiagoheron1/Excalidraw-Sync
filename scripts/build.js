@@ -6,8 +6,8 @@ const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const dist = path.join(root, "dist");
-const sourceFiles = ["background.js", "content.js", "LICENSE", "README.md"];
-const sourceDirectories = ["shared", "icons"];
+const sourceFiles = ["background.js", "content.js", "vault.html", "vault.js", "LICENSE", "README.md"];
+const sourceDirectories = ["shared", "icons", "_locales"];
 
 function copyTarget(target, manifestTransform = (value) => value) {
   const output = path.join(dist, target);
@@ -25,6 +25,7 @@ function copyTarget(target, manifestTransform = (value) => value) {
 }
 
 fs.mkdirSync(dist, { recursive: true });
+fs.cpSync(path.join(root, "native-host"), path.join(dist, "native-host"), { recursive: true, force: true });
 const chromeOutput = copyTarget("chrome", (manifest) => {
   delete manifest.browser_specific_settings;
   return manifest;
@@ -44,4 +45,3 @@ for (const [name, output] of [["chrome", chromeOutput], ["firefox", firefoxOutpu
 }
 
 console.log("Built Chrome/Edge/Opera and Firefox packages in dist/.");
-

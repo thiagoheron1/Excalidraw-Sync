@@ -1,12 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "Excalidraw Sync",
-  "version": "0.1.0",
-  "description": "Organize Excalidraw files in folders and sync them to GitHub or Google Drive.",
+  "default_locale": "en",
+  "name": "__MSG_extensionName__",
+  "version": "0.4.0",
+  "description": "__MSG_extensionDescription__",
   "permissions": [
     "storage",
     "unlimitedStorage",
-    "identity"
+    "identity",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://excalidraw.com/*",
@@ -20,7 +22,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Open Excalidraw Sync",
+    "default_title": "__MSG_actionTitle__",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
@@ -37,7 +39,7 @@
   "content_scripts": [
     {
       "matches": ["https://excalidraw.com/*"],
-      "js": ["shared/core.js", "content.js"],
+      "js": ["shared/core.js", "shared/ui-events.js", "shared/i18n.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
@@ -48,4 +50,3 @@
     }
   }
 }
-

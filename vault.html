@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ExcaliSync local vault</title>
+    <style>
+      :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5fb; color: #23232b; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top left, #ecebff, transparent 42%), #f7f7fb; }
+      main { width: min(940px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 72px; }
+      header { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; }
+      .mark { width: 48px; height: 48px; border-radius: 15px; display: grid; place-items: center; color: white; background: linear-gradient(145deg, #7c78ec, #6965db); box-shadow: 0 10px 28px #5f5ac044; font-size: 24px; }
+      h1 { margin: 0; font-size: clamp(24px, 4vw, 34px); letter-spacing: -.04em; }
+      header p { margin: 4px 0 0; color: #686879; }
+      .notice { padding: 14px 16px; border: 1px solid #d8d6f4; border-radius: 14px; background: #ffffffc7; color: #555467; line-height: 1.5; margin-bottom: 22px; }
+      .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 18px 0; }
+      .path { font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #5853bf; }
+      button { min-height: 40px; padding: 0 14px; border: 1px solid #cfcedd; border-radius: 10px; background: #fff; color: #292934; font: 650 14px/1 inherit; cursor: pointer; }
+      button:hover { border-color: #7772d4; background: #f4f3ff; }
+      .tree { display: grid; gap: 14px; }
+      .folder { border: 1px solid #dddce8; border-radius: 16px; background: #ffffffdf; overflow: hidden; box-shadow: 0 6px 22px #2222380b; }
+      .folder h2 { display: flex; align-items: center; gap: 9px; margin: 0; padding: 14px 17px; border-bottom: 1px solid #ecebf2; font-size: 15px; }
+      .files { display: grid; }
+      .file { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 13px 17px; border-top: 1px solid #f0eff5; }
+      .file:first-child { border-top: 0; }
+      .file strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .file small { color: #777687; }
+      .empty { padding: 28px; color: #777687; text-align: center; }
+      @media (prefers-color-scheme: dark) {
+        :root { background: #111114; color: #f5f5f7; }
+        body { background: radial-gradient(circle at top left, #292653, transparent 40%), #111114; }
+        header p, .notice, .file small, .empty { color: #aaa9b6; }
+        .notice, .folder { background: #1b1b20e8; border-color: #393842; }
+        .folder h2, .file { border-color: #303037; }
+        button { background: #29292f; border-color: #42414c; color: #f5f5f7; }
+        button:hover { background: #353441; }
+        .path { color: #b9b6ff; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><div class="mark" aria-hidden="true">✓</div><div><h1>ExcaliSync local vault</h1><p>Your browser-local copy of every Excalidraw document.</p></div></header>
+      <div class="notice">This is the logical <strong>.excalidraw-sync</strong> folder stored securely by the browser extension. Browsers do not expose the physical profile-storage directory. Download a document below when you need a normal file on disk.</div>
+      <div class="toolbar"><span class="path">.excalidraw-sync/</span><button id="refresh" type="button">Refresh</button></div>
+      <div id="tree" class="tree" aria-live="polite"></div>
+    </main>
+    <script src="shared/i18n.js"></script>
+    <script src="vault.js"></script>
+  </body>
+</html>

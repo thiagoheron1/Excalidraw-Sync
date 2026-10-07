@@ -1,11 +1,16 @@
-/* global ExcalidrawSyncCore */
+/* global ExcalidrawSyncCore, ExcalidrawSyncSecurity */
 "use strict";
 
-importScripts("shared/core.js");
+importScripts("shared/core.js", "shared/security.js");
 
 const extensionApi = globalThis.browser || globalThis.chrome;
 const usesPromiseApi = typeof globalThis.browser !== "undefined";
 const PROVIDERS_KEY = "excalidrawSync.providers";
+const PROVIDER_SESSION_KEY = "excalidrawSync.providerSession";
+const SIDEBAR_OPEN_REQUEST_KEY = "excalidrawSync.sidebarOpenRequested";
+const LAUNCHER_INTRODUCED_KEY = "excalidrawSync.launcherIntroduced";
+const NATIVE_HOST_NAME = "com.thiagoheron.excalidraw_sync";
+let volatileProviderSession = null;
 
 function apiCall(target, method, ...args) {
   if (usesPromiseApi) {
@@ -30,6 +35,26 @@ async function storageGet(key) {
 
 async function storageSet(key, value) {
   await apiCall(extensionApi.storage.local, "set", { [key]: value });
+}
+
+async function sessionGet(key) {
+  if (!extensionApi.storage.session) {
+    return key === PROVIDER_SESSION_KEY ? volatileProviderSession : null;
+  }
+  const result = await apiCall(extensionApi.storage.session, "get", key);
+  return result?.[key];
+}
+
+async function sessionSet(key, value) {
+  if (!extensionApi.storage.session) {
+    if (key === PROVIDER_SESSION_KEY) volatileProviderSession = value;
+    return;
+  }
+  await apiCall(extensionApi.storage.session, "set", { [key]: value });
+}
+
+async function nativeMessage(message) {
+  return apiCall(extensionApi.runtime, "sendNativeMessage", NATIVE_HOST_NAME, message);
 }
 
 function defaultProviderState() {
@@ -65,27 +90,31 @@ function defaultProviderState() {
 }
 
 async function readProviders() {
-  const stored = await storageGet(PROVIDERS_KEY);
+  const [stored, sessionStored] = await Promise.all([
+    storageGet(PROVIDERS_KEY),
+    sessionGet(PROVIDER_SESSION_KEY),
+  ]);
   const defaults = defaultProviderState();
   if (!stored) {
-    return defaults;
+    return ExcalidrawSyncSecurity.mergeProviderStorage(defaults, {}, sessionStored || {});
   }
-  return {
-    github: {
-      ...defaults.github,
-      ...stored.github,
-      config: { ...defaults.github.config, ...stored.github?.config },
-    },
-    googleDrive: {
-      ...defaults.googleDrive,
-      ...stored.googleDrive,
-      config: { ...defaults.googleDrive.config, ...stored.googleDrive?.config },
-    },
-  };
+  const legacySession = ExcalidrawSyncSecurity.providerSessionState(stored);
+  const providers = ExcalidrawSyncSecurity.mergeProviderStorage(
+    defaults,
+    stored,
+    sessionStored || legacySession,
+  );
+  if (ExcalidrawSyncSecurity.hasSensitiveProviderData(stored)) {
+    await writeProviders(providers);
+  }
+  return providers;
 }
 
 async function writeProviders(providers) {
-  await storageSet(PROVIDERS_KEY, providers);
+  await Promise.all([
+    storageSet(PROVIDERS_KEY, ExcalidrawSyncSecurity.providerPersistentState(providers)),
+    sessionSet(PROVIDER_SESSION_KEY, ExcalidrawSyncSecurity.providerSessionState(providers)),
+  ]);
 }
 
 function publicProviderState(providers) {
@@ -330,7 +359,25 @@ async function gitBlobSha(content) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function githubSync(workspace, providers) {
+async function readGitHubWorkspace(repository, rootDirectory, token) {
+  const owner = repository.owner.login;
+  const repo = repository.name;
+  const branch = repository.default_branch || "main";
+  const placeholder = ExcalidrawSyncCore.createWorkspace();
+  const indexPath = ExcalidrawSyncCore.buildProviderFiles(placeholder, rootDirectory)
+    .find((file) => file.id === "workspace-index").path;
+  const response = await getGitHubContent(owner, repo, indexPath, token, branch);
+  if (!response?.content) return null;
+  const index = JSON.parse(base64ToUtf8(response.content));
+  const scenes = {};
+  await Promise.all((index.files || []).map(async (file) => {
+    const remote = await getGitHubContent(owner, repo, file.path, token, branch);
+    if (remote?.content) scenes[file.path] = JSON.parse(base64ToUtf8(remote.content));
+  }));
+  return ExcalidrawSyncCore.workspaceFromProviderIndex(index, scenes);
+}
+
+async function githubSync(workspaceInput, providers) {
   if (!providers.github.auth?.accessToken) {
     return { skipped: true };
   }
@@ -339,6 +386,14 @@ async function githubSync(workspace, providers) {
   const owner = repository.owner.login;
   const repo = repository.name;
   const branch = repository.default_branch || "main";
+  const remoteWorkspace = await readGitHubWorkspace(
+    repository,
+    providers.github.config.rootDirectory,
+    token,
+  );
+  const workspace = remoteWorkspace
+    ? ExcalidrawSyncCore.mergeWorkspaces(workspaceInput, remoteWorkspace)
+    : ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
   const desiredFiles = ExcalidrawSyncCore.buildProviderFiles(
     workspace,
     providers.github.config.rootDirectory,
@@ -411,7 +466,7 @@ async function githubSync(workspace, providers) {
   providers.github.repositoryUrl = repository.html_url;
   providers.github.lastSyncAt = new Date().toISOString();
   providers.github.lastError = null;
-  return { skipped: false, changed, url: repository.html_url };
+  return { skipped: false, changed, url: repository.html_url, workspace };
 }
 
 async function launchWebAuthFlow(details) {
@@ -528,10 +583,10 @@ async function listDriveWorkspaceItems(workspaceId, token) {
   const items = [];
   let pageToken = "";
   do {
-    const query = `appProperties has { key='excalidrawSyncWorkspace' and value='${workspaceId.replace(/'/g, "\\'")}' } and trashed=false`;
+    const query = `appProperties has { key='excalidrawSyncWorkspace' and value='${workspaceId.replace(/'/g, "\\'")}' }`;
     const params = new URLSearchParams({
       q: query,
-      fields: "nextPageToken,files(id,name,mimeType,parents,appProperties,modifiedTime)",
+      fields: "nextPageToken,files(id,name,mimeType,parents,appProperties,modifiedTime,trashed)",
       pageSize: "1000",
       spaces: "drive",
     });
@@ -543,6 +598,57 @@ async function listDriveWorkspaceItems(workspaceId, token) {
     pageToken = result.nextPageToken || "";
   } while (pageToken);
   return items;
+}
+
+async function listDriveWorkspaceRoots(token) {
+  const params = new URLSearchParams({
+    q: "appProperties has { key='excalidrawSyncKind' and value='root' } and trashed=false",
+    fields: "files(id,name,mimeType,parents,appProperties,modifiedTime,trashed)",
+    pageSize: "1000",
+    spaces: "drive",
+  });
+  const result = await driveRequest(`/drive/v3/files?${params}`, token);
+  return result.files || [];
+}
+
+async function readDriveWorkspace(root, items, token) {
+  if (!root) return null;
+  const generatedAt = items.reduce(
+    (latest, item) => item.modifiedTime > latest ? item.modifiedTime : latest,
+    root.modifiedTime || new Date(0).toISOString(),
+  );
+  const scenes = {};
+  const remoteFiles = items.filter((item) =>
+    !item.trashed && item.appProperties?.excalidrawSyncKind === "file" && item.appProperties?.excalidrawSyncId,
+  );
+  await Promise.all(remoteFiles.map(async (file) => {
+    scenes[file.id] = await driveRequest(`/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`, token);
+  }));
+  return ExcalidrawSyncCore.workspaceFromProviderIndex({
+    formatVersion: 2,
+    workspaceId: root.appProperties?.excalidrawSyncWorkspace,
+    workspaceName: root.name,
+    generatedAt,
+    folders: items.filter((item) => !item.trashed && item.appProperties?.excalidrawSyncKind === "folder").map((item) => ({
+      id: item.appProperties.excalidrawSyncId,
+      name: item.name,
+      createdAt: item.modifiedTime,
+      updatedAt: item.modifiedTime,
+    })),
+    files: remoteFiles.map((item) => ({
+      id: item.appProperties.excalidrawSyncId,
+      folderId: item.appProperties.excalidrawSyncFolderId || null,
+      path: item.id,
+      name: item.name.replace(/\.excalidraw$/i, ""),
+      createdAt: item.modifiedTime,
+      updatedAt: item.modifiedTime,
+    })),
+    tombstones: items.filter((item) => item.trashed && ["file", "folder"].includes(item.appProperties?.excalidrawSyncKind)).map((item) => ({
+      kind: item.appProperties.excalidrawSyncKind,
+      id: item.appProperties.excalidrawSyncId,
+      deletedAt: item.modifiedTime,
+    })),
+  }, scenes);
 }
 
 async function createDriveMetadata(metadata, token) {
@@ -607,13 +713,21 @@ async function setDriveVisibility(folderId, visibility, token) {
   }
 }
 
-async function googleDriveSync(workspace, providers) {
+async function googleDriveSync(workspaceInput, providers) {
   if (!providers.googleDrive.auth?.accessToken) {
     return { skipped: true };
   }
   const token = await googleToken(providers);
-  let items = await listDriveWorkspaceItems(workspace.id, token);
-  let root = items.find((item) => item.appProperties?.excalidrawSyncKind === "root");
+  const roots = await listDriveWorkspaceRoots(token);
+  let root = roots.find((item) => item.id === providers.googleDrive.folderId)
+    || roots.find((item) => item.name === (providers.googleDrive.config.folderName.trim() || "Excalidraw"));
+  let items = root
+    ? await listDriveWorkspaceItems(root.appProperties?.excalidrawSyncWorkspace, token)
+    : [];
+  const remoteWorkspace = await readDriveWorkspace(root, items, token);
+  const workspace = remoteWorkspace
+    ? ExcalidrawSyncCore.mergeWorkspaces(workspaceInput, remoteWorkspace)
+    : ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
   const rootMetadata = {
     name: providers.googleDrive.config.folderName.trim() || "Excalidraw",
     mimeType: "application/vnd.google-apps.folder",
@@ -632,7 +746,7 @@ async function googleDriveSync(workspace, providers) {
 
   const foldersBySyncId = new Map(
     items
-      .filter((item) => item.appProperties?.excalidrawSyncKind === "folder")
+      .filter((item) => !item.trashed && item.appProperties?.excalidrawSyncKind === "folder")
       .map((item) => [item.appProperties.excalidrawSyncId, item]),
   );
   const liveFolderIds = new Set();
@@ -664,7 +778,7 @@ async function googleDriveSync(workspace, providers) {
 
   const remoteFilesBySyncId = new Map(
     items
-      .filter((item) => item.appProperties?.excalidrawSyncKind === "file")
+      .filter((item) => !item.trashed && item.appProperties?.excalidrawSyncKind === "file")
       .map((item) => [item.appProperties.excalidrawSyncId, item]),
   );
   const liveFileIds = new Set();
@@ -730,16 +844,17 @@ async function googleDriveSync(workspace, providers) {
   providers.googleDrive.folderUrl = `https://drive.google.com/drive/folders/${root.id}`;
   providers.googleDrive.lastSyncAt = new Date().toISOString();
   providers.googleDrive.lastError = null;
-  return { skipped: false, changed, url: providers.googleDrive.folderUrl };
+  return { skipped: false, changed, url: providers.googleDrive.folderUrl, workspace };
 }
 
 async function syncAll(workspaceInput) {
-  const workspace = ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
+  let workspace = ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
   const providers = await readProviders();
   const result = {};
   if (providers.github.auth?.accessToken) {
     try {
       result.github = await githubSync(workspace, providers);
+      workspace = result.github.workspace || workspace;
     } catch (error) {
       providers.github.lastError = cleanMessage(error);
       result.github = { error: providers.github.lastError };
@@ -750,6 +865,7 @@ async function syncAll(workspaceInput) {
   if (providers.googleDrive.auth?.accessToken) {
     try {
       result.googleDrive = await googleDriveSync(workspace, providers);
+      workspace = result.googleDrive.workspace || workspace;
     } catch (error) {
       providers.googleDrive.lastError = cleanMessage(error);
       result.googleDrive = { error: providers.googleDrive.lastError };
@@ -758,7 +874,7 @@ async function syncAll(workspaceInput) {
     result.googleDrive = { skipped: true };
   }
   await writeProviders(providers);
-  return { result, providers: publicProviderState(providers) };
+  return { result, providers: publicProviderState(providers), workspace };
 }
 
 async function handleMessage(message) {
@@ -808,6 +924,19 @@ async function handleMessage(message) {
     }
     case "sync:workspace":
       return syncAll(message.workspace);
+    case "native:syncWorkspace":
+      return nativeMessage({ type: "syncWorkspace", workspace: message.workspace });
+    case "native:status":
+      return nativeMessage({ type: "status" });
+    case "native:openVault":
+      return nativeMessage({ type: "openVault" });
+    case "native:clearVault":
+      return nativeMessage({ type: "clearVault" });
+    case "native:logError":
+      return nativeMessage({ type: "writeErrorLog", error: message.error });
+    case "vault:open":
+      await apiCall(extensionApi.tabs, "create", { url: extensionApi.runtime.getURL("vault.html") });
+      return { opened: true };
     default:
       return null;
   }
@@ -820,13 +949,21 @@ extensionApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+extensionApi.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") {
+    void storageSet(LAUNCHER_INTRODUCED_KEY, false).catch(() => {});
+  }
+});
+
 extensionApi.action.onClicked.addListener(async (tab) => {
   if (!tab.id || !tab.url?.startsWith("https://excalidraw.com/")) {
     return;
   }
+  await storageSet(LAUNCHER_INTRODUCED_KEY, true).catch(() => {});
   try {
     await apiCall(extensionApi.tabs, "sendMessage", tab.id, { type: "sidebar:toggle" });
   } catch (_error) {
-    // The content script will be available after Excalidraw finishes loading.
+    await storageSet(SIDEBAR_OPEN_REQUEST_KEY, true);
+    await apiCall(extensionApi.tabs, "reload", tab.id);
   }
 });

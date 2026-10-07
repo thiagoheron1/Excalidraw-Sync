@@ -1,16 +1,19 @@
 {
   "name": "excalidraw-sync",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "description": "A local-first Excalidraw file manager with GitHub and Google Drive sync.",
   "scripts": {
     "test": "node --test",
-    "check": "node --check shared/core.js && node --check background.js && node --check content.js && node scripts/validate-manifest.js",
+    "check": "node --check shared/core.js && node --check shared/security.js && node --check shared/ui-events.js && node --check background.js && node --check content.js && node --check vault.js && node --check native-host/host.js && node scripts/validate-manifest.js",
     "build": "node scripts/build.js",
     "build:safari": "npm run build && node scripts/build-safari.js"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "jsdom": "24.1.3"
   },
   "license": "MIT"
 }

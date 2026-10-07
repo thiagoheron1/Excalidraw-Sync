@@ -1,0 +1,5 @@
+{
+  "extensionName": { "message": "ExcaliSync" },
+  "extensionDescription": { "message": "Organize Excalidraw files in folders and sync them to GitHub or Google Drive." },
+  "actionTitle": { "message": "Open ExcaliSync" }
+}

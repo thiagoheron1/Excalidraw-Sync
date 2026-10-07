@@ -24,3 +24,12 @@ test("a file swipe cannot bubble into its parent folder deletion gesture", () =>
   const ownershipGuard = /event\.target\.closest\(\"\[data-deletable\]\"\) !== row/g;
   assert.equal(content.match(ownershipGuard)?.length, 2);
 });
+
+test("deleting every local file requires the exact typed confirmation", () => {
+  assert.match(content, /data-action="delete-local-files"/);
+  assert.match(content, /name: "confirmation", label: 'Type "delete" to confirm'/);
+  assert.match(content, /result\.confirmation\.trim\(\) !== "delete"/);
+  assert.match(content, /storageRemove\(\[WORKSPACE_KEY, LOCAL_VAULT_KEY, SAVE_STATE_KEY, NOTIFICATIONS_KEY\]\)/);
+  assert.match(content, /native:clearVault/);
+  assert.match(content, /deleteDurableWorkspaceBackup\(\)/);
+});
