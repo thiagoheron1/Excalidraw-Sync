@@ -17,6 +17,34 @@ test("normalizes an Excalidraw file and preserves embedded files", () => {
   assert.equal(scene.files.image.id, "image");
 });
 
+test("a GitHub provider round trip preserves an embedded screenshot payload", () => {
+  const pngDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP2wWQAAAABJRU5ErkJggg==";
+  const workspace = core.createWorkspace("Screenshots");
+  workspace.files[0].scene = core.normalizeScene({
+    type: "excalidraw",
+    version: 2,
+    source: "https://excalidraw.com",
+    elements: [{ id: "image-element", type: "image", fileId: "screenshot-file", isDeleted: false, status: "saved" }],
+    appState: {},
+    files: {
+      "screenshot-file": {
+        id: "screenshot-file",
+        mimeType: "image/png",
+        dataURL: pngDataURL,
+        created: 1,
+      },
+    },
+  });
+  workspace.files[0].hash = core.hashScene(workspace.files[0].scene);
+  const providerFiles = core.buildProviderFiles(workspace, "Excalidraw");
+  const drawing = providerFiles.find((file) => file.id === workspace.files[0].id);
+  const index = JSON.parse(providerFiles.find((file) => file.id === "workspace-index").content);
+  const restored = core.workspaceFromProviderIndex(index, { [drawing.path]: JSON.parse(drawing.content) });
+
+  assert.equal(restored.files[0].scene.elements[0].fileId, "screenshot-file");
+  assert.equal(restored.files[0].scene.files["screenshot-file"].dataURL, pngDataURL);
+});
+
 test("scene hashes ignore Excalidraw's mutable lastRetrieved metadata", () => {
   const first = core.emptyScene();
   first.files.image = { id: "image", dataURL: "data:image/png;base64,AA==", lastRetrieved: 1 };

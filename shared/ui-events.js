@@ -81,6 +81,62 @@
     return recovery?.workspace || stored || durable || null;
   }
 
+  function liveImageFileIds(elements = []) {
+    return [...new Set(
+      elements
+        .filter((element) => element?.type === "image" && element.isDeleted !== true && element.fileId)
+        .map((element) => element.fileId),
+    )];
+  }
+
+  async function waitForEmbeddedFiles(
+    fileIds,
+    readFiles,
+    { attempts = 12, delayMs = 150, wait = (ms) => new Promise((resolve) => globalScope.setTimeout(resolve, ms)) } = {},
+  ) {
+    const expectedIds = [...new Set((fileIds || []).filter(Boolean))];
+    if (!expectedIds.length) return {};
+    let files = {};
+    let missingIds = expectedIds;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      files = await readFiles(expectedIds);
+      missingIds = expectedIds.filter((id) => {
+        const dataURL = files?.[id]?.dataURL;
+        return typeof dataURL !== "string" || !dataURL.startsWith("data:");
+      });
+      if (!missingIds.length) return files;
+      if (attempt < attempts - 1) await wait(delayMs);
+    }
+    throw new Error(`Excalidraw is still saving ${missingIds.length} embedded image${missingIds.length === 1 ? "" : "s"}. Please try again.`);
+  }
+
+  function sceneStorageFingerprint(elements = []) {
+    return JSON.stringify(
+      (Array.isArray(elements) ? elements : [])
+        .filter((element) => element?.isDeleted !== true && element?.id)
+        .map((element) => [element.id, element.type || "", element.fileId || ""]),
+    );
+  }
+
+  async function waitForImportedScene(
+    elements,
+    readStoredElements,
+    { attempts = 150, delayMs = 100, wait = (ms) => new Promise((resolve) => globalScope.setTimeout(resolve, ms)) } = {},
+  ) {
+    const expected = sceneStorageFingerprint(elements);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      let stored = [];
+      try {
+        stored = JSON.parse((await readStoredElements()) || "[]");
+      } catch (_error) {
+        stored = [];
+      }
+      if (sceneStorageFingerprint(stored) === expected) return stored;
+      if (attempt < attempts - 1) await wait(delayMs);
+    }
+    throw new Error("Excalidraw did not finish importing the drawing in time.");
+  }
+
   function normalizeSaveSettings(value = {}) {
     const mode = ["edit", "interval", "manual"].includes(value.mode) ? value.mode : "edit";
     const intervalSeconds = [5, 15, 30, 60, 300].includes(Number(value.intervalSeconds))
@@ -386,6 +442,7 @@
     isExtensionContextInvalidated,
     isSaveShortcut,
     isEditableEvent,
+    liveImageFileIds,
     normalizeSaveSettings,
     normalizeTheme,
     observeExcalidrawTheme,
@@ -394,7 +451,10 @@
     runWithInvalidationRecovery,
     shouldHighlightLauncher,
     sidebarViewForOpen,
+    sceneStorageFingerprint,
     workspaceForRecovery,
+    waitForEmbeddedFiles,
+    waitForImportedScene,
   };
   globalScope.ExcalidrawSyncUIEvents = api;
   if (typeof module !== "undefined" && module.exports) {

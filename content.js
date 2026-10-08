@@ -1049,8 +1049,8 @@
     } catch (_error) {
       throw new Error("Excalidraw has not finished saving this drawing yet.");
     }
-    const fileIds = [...new Set(elementsValue.map((item) => item?.fileId).filter(Boolean))];
-    const files = await readSceneFiles(fileIds);
+    const fileIds = ExcalidrawSyncUIEvents.liveImageFileIds(elementsValue);
+    const files = await ExcalidrawSyncUIEvents.waitForEmbeddedFiles(fileIds, readSceneFiles);
     return ExcalidrawSyncCore.normalizeScene({
       type: "excalidraw",
       version: 2,
@@ -1066,9 +1066,21 @@
     await writeSceneFiles(scene.files);
     localStorage.setItem("excalidraw", JSON.stringify(scene.elements));
     localStorage.setItem("excalidraw-state", JSON.stringify(scene.appState));
-    const version = JSON.stringify(Date.now());
+    const storedVersions = ["version-dataState", "version-files"].map((key) => {
+      try {
+        return Number(JSON.parse(localStorage.getItem(key) || "-1")) || -1;
+      } catch (_error) {
+        return -1;
+      }
+    });
+    const version = JSON.stringify(Math.max(Date.now(), ...storedVersions.map((value) => value + 1)));
     localStorage.setItem("version-dataState", version);
     localStorage.setItem("version-files", version);
+    // Excalidraw reloads externally-written elements and image binaries through
+    // its focus/visibility storage-sync path. A synthetic focus event keeps the
+    // current tab and ExcaliSync sidebar open while hydrating restored images.
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
   }
 
   async function applySceneInPlace(sceneInput) {
@@ -1081,8 +1093,14 @@
     localStorage.setItem("version-dataState", version);
     localStorage.setItem("version-files", version);
     window.location.hash = `url=${encodeURIComponent(blobUrl)}`;
-    await new Promise((resolve) => window.setTimeout(resolve, 300));
-    URL.revokeObjectURL(blobUrl);
+    try {
+      await ExcalidrawSyncUIEvents.waitForImportedScene(
+        scene.elements,
+        () => localStorage.getItem("excalidraw"),
+      );
+    } finally {
+      URL.revokeObjectURL(blobUrl);
+    }
     await applyScene(scene);
     state.lastBrowserFingerprint = browserFingerprint();
   }
