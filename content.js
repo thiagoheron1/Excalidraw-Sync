@@ -198,6 +198,8 @@
       chevron: '<path d="m8 10 4 4 4-4"/>',
       cloud: '<path d="M6.5 19a4.5 4.5 0 0 1-.4-9A6 6 0 0 1 17.6 8 5.5 5.5 0 0 1 18 19Z"/><path d="m9 14 3-3 3 3M12 11v7"/>',
       sync: '<path d="M20 7h-5V2"/><path d="m20 2-3.5 3.5A8 8 0 0 0 4.6 8"/><path d="M4 17h5v5"/><path d="m4 22 3.5-3.5A8 8 0 0 0 19.4 16"/>',
+      pull: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>',
+      push: '<path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 4h14"/>',
       openFolder: '<path d="M3 7h7l2 2h9l-2 10H5z"/><path d="M3 7v12h2"/>',
       import: '<path d="M5 4h9l5 5v11H5zM14 4v5h5"/><path d="M12 12v6M9 15l3 3 3-3"/>',
       check: '<path d="m5 12 4 4L19 6"/>',
@@ -214,9 +216,6 @@
   function providerIcon(name, size = 22) {
     if (name === "github") {
       return `<svg class="provider-icon github" aria-hidden="true" viewBox="0 0 24 24" width="${size}" height="${size}"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.68 0-1.26.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.76 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.82 1.19 3.08 0 4.41-2.71 5.38-5.29 5.67.42.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>`;
-    }
-    if (name === "googleDrive") {
-      return `<svg class="provider-icon google-drive" aria-hidden="true" viewBox="0 0 24 24" width="${size}" height="${size}"><path fill="#0F9D58" d="M8.1 3h5.15l7.55 13.08h-5.16z"/><path fill="#F4B400" d="M8.1 3 .55 16.08l2.58 4.46L10.68 7.46z"/><path fill="#4285F4" d="M3.13 20.54h15.1l2.57-4.46H5.7z"/></svg>`;
     }
     return "";
   }
@@ -352,12 +351,16 @@
     .sync-row button { border: 0; background: var(--surface); color: var(--accent); cursor: pointer; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border-radius: 8px; }
     .sync-row button:hover, .header-sync:hover { background: var(--surface-2); }
     .header-sync.syncing svg { animation: spin .9s linear infinite; }
-    .cloud-status { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0 3px 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+    .cloud-status { display: grid; grid-template-columns: 1fr; gap: 7px; margin: 0 3px 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
     .cloud-provider { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; padding: 8px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
     .cloud-provider.has-error { border-color: var(--error-border); background: var(--danger-soft); }
     .cloud-provider-copy { min-width: 0; }
     .cloud-provider-copy strong { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 650; white-space: nowrap; }
     .cloud-provider-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
+    .cloud-provider-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+    .cloud-sync-action { width: 25px; height: 25px; border: 0; border-radius: 7px; background: transparent; color: var(--accent); display: grid; place-items: center; padding: 0; cursor: pointer; }
+    .cloud-sync-action:hover { background: var(--active-bg); color: var(--accent-text); }
+    .cloud-sync-action:disabled { opacity: .38; cursor: not-allowed; background: transparent; color: var(--muted); }
     .auto-state { display: inline-flex; align-items: center; padding: 1px 5px; border-radius: 99px; background: var(--badge-bg); color: var(--muted); font-size: 8px; font-weight: 750; letter-spacing: .02em; text-transform: uppercase; }
     .auto-state.on { background: var(--success-bg); color: var(--success); }
     .section { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 5px; }
@@ -375,7 +378,12 @@
     .folder-toggle .chevron { transition: transform .16s ease; }
     .folder.collapsed .chevron { transform: rotate(-90deg); }
     .folder.collapsed .folder-files { display: none; }
-    .folder-children { margin-left: 14px; padding-left: 7px; border-left: 1px solid var(--border); }
+    .folder-files { position: relative; margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--border); }
+    .folder-files > .file-row { margin-left: 0; }
+    .folder-files > .file-row::before { content: ""; position: absolute; left: -11px; top: 50%; width: 10px; border-top: 1px solid var(--border); }
+    .folder-children { margin-left: 0; padding-left: 0; border-left: 0; }
+    .folder-files > .folder-children > .folder { position: relative; }
+    .folder-files > .folder-children > .folder::before { content: ""; position: absolute; left: -11px; top: 17px; width: 10px; border-top: 1px solid var(--border); }
     .row-actions { display: flex; align-items: center; gap: 1px; }
     .row-action { width: 27px; height: 27px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
     .row-action:hover { background: var(--surface-2); color: var(--text); }
@@ -628,6 +636,8 @@
     const health = ExcalidrawSyncUIEvents.getSaveHealth({
       dirtySince: state.dirtySince,
       unsyncedSince: hasConnectedCloud() ? state.unsyncedSince : null,
+      mode: state.saveSettings.mode,
+      intervalSeconds: state.saveSettings.intervalSeconds,
       staleMinutes: state.saveSettings.staleMinutes,
     });
     return health;
@@ -1159,7 +1169,7 @@
           await applySceneInPlace(mergedActive.scene);
         }
       }
-      const retryableFailure = [result.result.github, result.result.googleDrive]
+      const retryableFailure = [result.result.github]
         .find((providerResult) => providerResult?.retryable);
       if (retryableFailure) {
         state.status = retryableFailure.message || "Cloud changed remotely · retrying…";
@@ -1169,7 +1179,7 @@
         if (!quiet) showToast(state.status);
         return;
       }
-      const errors = [result.result.github?.error, result.result.googleDrive?.error].filter(Boolean);
+      const errors = [result.result.github?.error].filter(Boolean);
       if (errors.length) {
         throw new Error(errors.join(" "));
       }
@@ -1938,6 +1948,8 @@
       dirtySince: state.dirtySince,
       active: file.id === state.workspace.activeFileId,
       connected: hasConnectedCloud(),
+      mode: state.saveSettings.mode,
+      intervalSeconds: state.saveSettings.intervalSeconds,
       staleMinutes: state.saveSettings.staleMinutes,
     });
     const message = health.level === "ok"
@@ -1988,12 +2000,12 @@
     return `
       <div class="cloud-provider ${hasError ? "has-error" : ""}" data-provider-status="${providerName}" title="${escapeHtml(`${automaticLabel}. ${statusMessage}.`)}">
         ${providerIcon(providerName, 18)}
-        <span class="cloud-provider-copy"><strong>${escapeHtml(label)} <span class="auto-state ${automatic ? "on" : ""}" aria-label="${automaticLabel}">${automatic ? "Auto on" : "Auto off"}</span></strong><small>${escapeHtml(statusMessage)}</small></span>
+        <span class="cloud-provider-copy"><strong>${escapeHtml(label)} <span class="auto-state ${automatic ? "on" : ""}" aria-label="${automaticLabel}">${automatic ? "Auto on" : "Auto off"}</span><span class="cloud-provider-actions" aria-label="GitHub sync controls"><button class="cloud-sync-action" type="button" data-action="github-pull" aria-label="${connected ? "Pull from GitHub" : "Connect GitHub to pull"}" title="${connected ? "Pull from GitHub" : "Connect GitHub to pull"}" ${connected ? "" : "disabled"}>${icon("pull", 16)}</button><button class="cloud-sync-action" type="button" data-action="github-push" aria-label="${connected ? "Push to GitHub" : "Connect GitHub to push"}" title="${connected ? "Push to GitHub" : "Connect GitHub to push"}" ${connected ? "" : "disabled"}>${icon("push", 16)}</button></span></strong><small>${escapeHtml(statusMessage)}</small></span>
       </div>`;
   }
 
   function providerHomeStatus() {
-    return `${providerHomeCard("github", "GitHub", state.providers?.github)}${providerHomeCard("googleDrive", "Google Drive", state.providers?.googleDrive)}`;
+    return providerHomeCard("github", "GitHub", state.providers?.github);
   }
 
   function fileRow(file, { pinned = false } = {}) {
@@ -2077,16 +2089,11 @@
 
   function renderManageView() {
     const github = state.providers?.github;
-    const drive = state.providers?.googleDrive;
     const trashCount = ExcalidrawSyncCore.activeTrashItems(state.workspace).length;
     const githubHasError = ExcalidrawSyncCore.hasActiveProviderError(github);
-    const driveHasError = ExcalidrawSyncCore.hasActiveProviderError(drive);
     const githubStatus = github?.connected
       ? github.account?.login || "Connected"
       : githubHasError ? "Needs attention" : "Not connected";
-    const driveStatus = drive?.connected
-      ? drive.account?.email || "Connected"
-      : driveHasError ? "Needs attention" : "Not connected";
     return `
       <div class="manage-title">
         <button class="icon-button" type="button" data-action="back" aria-label="Back to files">${icon("back", 19)}</button>
@@ -2124,7 +2131,7 @@
         <section class="settings-card cloud-settings">
           <div class="settings-heading">${icon("cloud", 17)}<div><strong>Cloud sync</strong><small>Expand a provider to configure it</small></div></div>
           <div class="settings-grid">
-            <label class="compact-field wide"><span>Sync authority</span><select name="syncAuthority"><option value="local" ${state.providers?.syncAuthority === "local" ? "selected" : ""}>Local only</option><option value="github" ${state.providers?.syncAuthority === "github" ? "selected" : ""}>GitHub</option><option value="googleDrive" ${state.providers?.syncAuthority === "googleDrive" ? "selected" : ""}>Google Drive</option></select></label>
+            <label class="compact-field wide"><span>Sync authority</span><select name="syncAuthority"><option value="local" ${state.providers?.syncAuthority === "local" ? "selected" : ""}>Local only</option><option value="github" ${state.providers?.syncAuthority === "github" ? "selected" : ""}>GitHub</option></select></label>
           </div>
           <p class="provider-note">Choose one cloud authority. Local storage remains the offline fallback; pending local changes merge when the selected provider is available again.</p>
           <details class="provider-disclosure" ${github?.pendingAuth || githubHasError ? "open" : ""}>
@@ -2139,22 +2146,9 @@
               <p class="provider-note">Public client ID only. Device Flow is required; never enter a client secret.</p>
               <details class="setup-guide"><summary>Create a GitHub OAuth App</summary><ol><li>Open GitHub Settings → Developer settings → OAuth Apps → <strong>New OAuth App</strong>.</li><li><strong>Application name:</strong> enter <code>ExcaliSync</code> (or another name you will recognize).</li><li><strong>Homepage URL:</strong> enter <code>https://excalidraw.com/</code>.</li><li><strong>Application description:</strong> optional; for example, <code>Sync Excalidraw drawings to my GitHub repository.</code></li><li><strong>Redirect URI:</strong> enter <code>https://excalidraw.com/</code>. GitHub requires this field, although ExcaliSync uses Device Flow and does not redirect to it.</li><li>Leave <strong>Allow wildcard matching</strong> off.</li><li>Turn <strong>Enable Device Flow</strong> on.</li><li>Keep <strong>Expire user access tokens</strong> on. ExcaliSync securely rotates Device Flow access and refresh tokens when GitHub expires them.</li><li>Select <strong>Register application</strong>, then copy only the <strong>Client ID</strong> into ExcaliSync.</li><li>Do not generate, paste, or share a client secret. A client ID is public; access tokens remain in extension-owned storage and are never added to drawings, logs, or Git commits.</li><li>On another machine, use the same GitHub account, Client ID, repository name, and root folder. The first sync downloads and merges the existing library.</li></ol></details>
               ${github?.pendingAuth ? `<div class="device-code"><span>Enter this code on GitHub</span><strong>${escapeHtml(github.pendingAuth.userCode)}</strong><a class="text-link" href="${escapeHtml(github.pendingAuth.verificationUri)}" target="_blank" rel="noreferrer">Open GitHub ${icon("external", 12)}</a></div>` : ""}
-              <div class="compact-actions"><button class="button primary" type="button" data-action="github-connect">${github?.connected ? "Reconnect" : "Connect"}</button>${github?.connected ? '<button class="button danger" type="button" data-action="disconnect" data-provider="github">Disconnect</button>' : ""}</div>
+              <div class="compact-actions"><button class="button primary" type="button" data-action="github-connect">${github?.connected ? "Reconnect" : "Connect"}</button>${github?.connected ? '<button class="button" type="button" data-action="github-pull">Pull</button><button class="button" type="button" data-action="github-push">Push</button><button class="button danger" type="button" data-action="github-force-push">Force push</button><button class="button danger" type="button" data-action="disconnect" data-provider="github">Disconnect</button>' : ""}</div>
+              ${github?.connected ? '<p class="provider-note">Pull replaces this browser’s local library with GitHub. Push safely merges GitHub first. Force push makes this browser’s local library authoritative and may overwrite remote ExcaliSync files.</p>' : ""}
               <p class="provider-note ${githubHasError ? "error" : ""}">${githubHasError ? escapeHtml(github.lastError) : github?.account ? `Signed in as ${escapeHtml(github.account.login)}. ${providerLink(github.repositoryUrl, "Repository")}` : "A private repository is created on first sync."}</p>
-            </div>
-          </details>
-          <details class="provider-disclosure" ${driveHasError ? "open" : ""}>
-            <summary>${providerIcon("googleDrive", 20)}<span class="provider-summary-copy"><strong>Google Drive</strong><small>${escapeHtml(driveStatus)}</small></span><span class="badge ${drive?.connected ? "connected" : ""}">${drive?.connected ? "On" : "Off"}</span><span class="chevron">${icon("chevron", 15)}</span></summary>
-            <div class="provider-config">
-              <div class="settings-grid">
-                <label class="compact-field wide"><span>Client ID</span><input name="googleClientId" value="${escapeHtml(drive?.config.clientId || "")}" placeholder="…apps.googleusercontent.com"></label>
-                <label class="compact-field"><span>Folder</span><input name="googleFolderName" value="${escapeHtml(drive?.config.folderName || "Excalidraw")}"></label>
-                <label class="compact-field"><span>Visibility</span><select name="googleVisibility"><option value="private" ${drive?.config.visibility !== "public" ? "selected" : ""}>Private</option><option value="public" ${drive?.config.visibility === "public" ? "selected" : ""}>Link sharing</option></select></label>
-              </div>
-              <p class="provider-note">Use a browser-specific OAuth client ID. Never enter a client secret.</p>
-              <details class="setup-guide"><summary>Create a Google OAuth client</summary><ol><li>Open Google Cloud Console and create or select a project.</li><li>Enable the Google Drive API.</li><li>Configure the OAuth consent screen and add yourself as a test user while the app is in testing.</li><li>Open Credentials → Create credentials → OAuth client ID → Chrome extension.</li><li>Enter this extension's ID from <strong>chrome://extensions</strong>, then copy the Client ID here.</li><li>No client secret belongs in this extension.</li><li>On another machine, use the same Google account, OAuth Client ID, and Drive folder name. The first sync downloads and merges the existing library.</li></ol></details>
-              <div class="compact-actions"><button class="button primary" type="button" data-action="google-connect">${drive?.connected ? "Reconnect" : "Connect"}</button>${drive?.connected ? '<button class="button danger" type="button" data-action="disconnect" data-provider="googleDrive">Disconnect</button>' : ""}</div>
-              <p class="provider-note ${driveHasError ? "error" : ""}">${driveHasError ? escapeHtml(drive.lastError) : drive?.account ? `Signed in as ${escapeHtml(drive.account.email)}. ${providerLink(drive.folderUrl, "Drive folder")}` : "The folder stays private by default."}</p>
             </div>
           </details>
         </section>
@@ -2516,11 +2510,6 @@
         visibility: data.githubVisibility,
         rootDirectory: data.githubRoot,
       },
-      googleDrive: {
-        clientId: data.googleClientId,
-        folderName: data.googleFolderName,
-        visibility: data.googleVisibility,
-      },
     });
   }
 
@@ -2597,17 +2586,65 @@
     }, Math.max(5, interval) * 1000);
   }
 
-  async function connectGoogle() {
-    setBusy(true, "Starting Google sign-in…");
+  async function applyGitHubWorkspace(result, message) {
+    state.providers = result.providers || state.providers;
+    state.workspace = ExcalidrawSyncCore.reconcileWorkspaces(
+      state.workspace,
+      result.workspace,
+      "pull",
+    );
+    ensureWorkspaceHasFile();
+    const active = state.workspace.files.find((file) => file.id === state.workspace.activeFileId)
+      || state.workspace.files[0];
+    state.workspace.activeFileId = active.id;
+    await persistWorkspace({ sync: false });
+    await applySceneInPlace(active.scene);
+    state.lastSyncedAt = ExcalidrawSyncCore.nowIso();
+    state.unsyncedSince = null;
+    await persistSaveState();
+    render();
+    showToast(message);
+  }
+
+  async function pullFromGitHub() {
+    const confirmed = await showFormDialog({
+      title: "Pull from GitHub?",
+      description: "This replaces the local ExcaliSync folders and files in this browser with the GitHub copy. Local changes that were not pushed can be overwritten.",
+      confirmLabel: "Pull and replace local",
+      danger: true,
+    });
+    if (!confirmed) return;
+    setBusy(true, "Pulling from GitHub…");
     try {
-      await saveProviderForm();
-      state.providers.googleDrive = await sendMessage({ type: "google:connect" });
-      state.providers.syncAuthority = "googleDrive";
-      showToast(`Connected to Google Drive as ${state.providers.googleDrive.account.email}.`);
-      render();
-      syncNow({ quiet: true });
-    } catch (error) {
-      showToast(error.message, "error");
+      const result = await sendMessage({ type: "github:pull" });
+      await applyGitHubWorkspace(result, "Pulled the GitHub library to this browser.");
+    } finally {
+      setBusy(false, "Saved locally");
+    }
+  }
+
+  async function pushToGitHub({ force = false } = {}) {
+    if (force) {
+      const confirmed = await showFormDialog({
+        title: "Force push to GitHub?",
+        description: "This makes this browser’s local library authoritative and can overwrite remote ExcaliSync files. Other repository files are not touched.",
+        fields: [{ name: "confirmation", label: 'Type "force push" to confirm', value: "", required: true }],
+        confirmLabel: "Force push",
+        danger: true,
+      });
+      if (!confirmed) return;
+      if (confirmed.confirmation.trim().toLowerCase() !== "force push") {
+        showToast('Type "force push" exactly to confirm.', "error");
+        return;
+      }
+    }
+    setBusy(true, force ? "Force pushing to GitHub…" : "Pushing to GitHub…");
+    try {
+      await captureAndSaveActive({ sync: false, force: true });
+      const result = await sendMessage({ type: "github:push", workspace: state.workspace, force });
+      await applyGitHubWorkspace(result, force
+        ? "Force pushed this browser’s library to GitHub."
+        : "Pushed changes to GitHub after merging remote updates.");
     } finally {
       setBusy(false, "Saved locally");
     }
@@ -2723,7 +2760,9 @@
         }
         if (action === "delete-local-files") await deleteAllLocalFiles();
         if (action === "github-connect") await connectGitHub();
-        if (action === "google-connect") await connectGoogle();
+        if (action === "github-pull") await pullFromGitHub();
+        if (action === "github-push") await pushToGitHub();
+        if (action === "github-force-push") await pushToGitHub({ force: true });
         if (action === "disconnect") {
           state.providers = await sendMessage({ type: "provider:disconnect", provider: button.dataset.provider });
           showToast("Provider disconnected from this browser.");
@@ -2879,7 +2918,7 @@
       if (recovery?.providerFormDraft) {
         await saveProviderForm(recovery.providerFormDraft);
       }
-      const providerSyncTimes = [state.providers.github?.lastSyncAt, state.providers.googleDrive?.lastSyncAt]
+      const providerSyncTimes = [state.providers.github?.lastSyncAt]
         .filter(Boolean)
         .sort();
       state.lastSyncedAt ||= providerSyncTimes.at(-1) || null;

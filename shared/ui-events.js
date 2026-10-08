@@ -8,6 +8,7 @@
     "[contenteditable='true']",
     "[role='textbox']",
   ].join(",");
+  const SAVE_WARNING_GRACE_SECONDS = 30;
 
   function isEditableEvent(event) {
     const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
@@ -100,7 +101,34 @@
     };
   }
 
-  function getSaveHealth({ dirtySince, unsyncedSince, staleMinutes = 5, now = Date.now() }) {
+  function warningDelayMs(kind, mode, intervalSeconds, graceSeconds) {
+    const saveDelaySeconds = kind === "unsaved" && mode === "interval"
+      ? Math.max(0, Number(intervalSeconds) || 0)
+      : 0;
+    return (saveDelaySeconds + Math.max(0, Number(graceSeconds) || 0)) * 1000;
+  }
+
+  function healthAfterExpectedWindow({ kind, ageMs, mode, intervalSeconds, graceSeconds, staleMinutes }) {
+    const warningAfterMs = warningDelayMs(kind, mode, intervalSeconds, graceSeconds);
+    if (ageMs <= warningAfterMs) {
+      return { level: "ok", kind: null, ageMs };
+    }
+    return {
+      level: ageMs >= warningAfterMs + staleMinutes * 60_000 ? "stale" : "pending",
+      kind,
+      ageMs,
+    };
+  }
+
+  function getSaveHealth({
+    dirtySince,
+    unsyncedSince,
+    mode = "edit",
+    intervalSeconds = 30,
+    graceSeconds = SAVE_WARNING_GRACE_SECONDS,
+    staleMinutes = 5,
+    now = Date.now(),
+  } = {}) {
     const candidates = [
       dirtySince ? { kind: "unsaved", since: new Date(dirtySince).getTime() } : null,
       unsyncedSince ? { kind: "unsynced", since: new Date(unsyncedSince).getTime() } : null,
@@ -110,11 +138,14 @@
     }
     const oldest = candidates.sort((left, right) => left.since - right.since)[0];
     const ageMs = Math.max(0, now - oldest.since);
-    return {
-      level: ageMs >= staleMinutes * 60_000 ? "stale" : "pending",
+    return healthAfterExpectedWindow({
       kind: oldest.kind,
       ageMs,
-    };
+      mode,
+      intervalSeconds,
+      graceSeconds,
+      staleMinutes,
+    });
   }
 
   function getFileSyncHealth({
@@ -123,6 +154,9 @@
     dirtySince,
     active = false,
     connected = false,
+    mode = "edit",
+    intervalSeconds = 30,
+    graceSeconds = SAVE_WARNING_GRACE_SECONDS,
     staleMinutes = 5,
     now = Date.now(),
   } = {}) {
@@ -141,11 +175,14 @@
       return { level: "ok", kind: null, ageMs: 0 };
     }
     const ageMs = Math.max(0, now - pendingSince);
-    return {
-      level: ageMs >= staleMinutes * 60_000 ? "stale" : "pending",
+    return healthAfterExpectedWindow({
       kind: dirtyTime ? "unsaved" : "unsynced",
       ageMs,
-    };
+      mode,
+      intervalSeconds,
+      graceSeconds,
+      staleMinutes,
+    });
   }
 
   function isExtensionContextInvalidated(error) {
@@ -338,6 +375,7 @@
   }
 
   const api = {
+    SAVE_WARNING_GRACE_SECONDS,
     attachDraggableLauncher,
     clampLauncherPosition,
     excalidrawControlsOffset,

@@ -48,12 +48,11 @@ test("follow-Excalidraw mode reacts when Excalidraw switches between light and d
   dom.window.close();
 });
 
-test("manage sync exposes theme selection and recognizable provider icons", () => {
+test("manage sync exposes theme selection and a recognizable GitHub icon", () => {
   assert.match(content, /select name="theme"/);
   assert.match(content, /providerIcon\("github", 20\)/);
-  assert.match(content, /providerIcon\("googleDrive", 20\)/);
   assert.match(content, /class="provider-icon github"/);
-  assert.match(content, /class="provider-icon google-drive"/);
+  assert.doesNotMatch(content, /class="provider-icon google-drive"/);
 });
 
 test("settings use compact groups and collapsible cloud providers without duplicate sync actions", () => {
@@ -132,7 +131,7 @@ test("home sections have dividers after Manage and cloud providers", () => {
   assert.match(content, /\.cloud-status \{[^}]*border-bottom: 1px solid var\(--border\)/);
 });
 
-test("files home shows automatic sync and last-sync status for each cloud provider", () => {
+test("files home shows automatic sync and last-sync status for GitHub", () => {
   const renderStart = content.indexOf("function renderFilesView");
   const renderEnd = content.indexOf("function providerLink", renderStart);
   const filesView = content.slice(renderStart, renderEnd);
@@ -142,7 +141,7 @@ test("files home shows automatic sync and last-sync status for each cloud provid
   assert.match(content, /Automatic sync off/);
   assert.match(content, /Last sync \$\{formatRelativeTime\(provider\.lastSyncAt\)\}/);
   assert.match(content, /providerHomeCard\("github", "GitHub"/);
-  assert.match(content, /providerHomeCard\("googleDrive", "Google Drive"/);
+  assert.doesNotMatch(content, /providerHomeCard\("googleDrive"/);
   assert.match(filesView, /aria-label="Automatic cloud sync status"/);
   assert.ok(filesView.indexOf('class="sync-row') < filesView.indexOf('class="cloud-status"'));
   assert.ok(filesView.indexOf('class="cloud-status"') < filesView.indexOf('class="search-wrap"'));

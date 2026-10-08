@@ -97,7 +97,7 @@ test("Trash is the final settings section after cloud sync", () => {
   assert.ok(manageView.indexOf("<strong>Trash</strong>") < manageView.indexOf("settings-auto-save"));
 });
 
-test("GitHub receives placeholders for empty folders while Drive creates real folders", () => {
+test("GitHub receives placeholders for empty folders", () => {
   const workspace = core.createWorkspace();
   workspace.files = [];
   workspace.folders.push({
@@ -115,7 +115,7 @@ test("GitHub receives placeholders for empty folders while Drive creates real fo
     "excalidraw/my-diagrams/empty-child/.gitkeep",
   ]);
   assert.match(background, /includeFolderPlaceholders: true/);
-  assert.match(background, /for \(const folder of workspace\.folders\)[\s\S]*?ensureDriveFolder\(folder\)/);
+  assert.doesNotMatch(background, /ensureDriveFolder/);
 });
 
 test("rich local Trash metadata survives a cloud tombstone with only an id", () => {
@@ -233,6 +233,14 @@ test("library exposes native disk sync, link import, sharing, sorting, and drag/
   assert.match(content, /drop/);
 });
 
+test("folder contents render as an indented tree with visible connector guides", () => {
+  assert.match(content, /\.folder-files \{[^}]*margin-left: 18px;[^}]*padding-left: 10px;[^}]*border-left: 1px solid var\(--border\)/);
+  assert.match(content, /\.folder-files > \.file-row::before \{[^}]*left: -11px;[^}]*border-top: 1px solid var\(--border\)/);
+  assert.match(content, /\.folder-files > \.folder-children > \.folder::before \{[^}]*left: -11px;[^}]*border-top: 1px solid var\(--border\)/);
+  assert.match(content, /<div class="folder-files">[\s\S]*?folderFiles\.map\(\(file\) => fileRow\(file\)\)/);
+  assert.match(content, /<div class="folder-children">\$\{childFolders\.map\(renderFolder\)\.join\(""\)\}<\/div>/);
+});
+
 test("folders can be drag-reordered and the order menu exposes a custom folder order", () => {
   const workspace = core.createWorkspace();
   const first = workspace.folders[0];
@@ -315,10 +323,9 @@ test("dropping a subfolder on the Folders header moves it back to the top level"
   assert.match(content, /Drop here to move to top level/);
 });
 
-test("OAuth setup instructions are available inside both provider settings", () => {
+test("GitHub OAuth setup instructions are available in provider settings", () => {
   assert.match(content, /Create a GitHub OAuth App/);
-  assert.match(content, /Create a Google OAuth client/);
-  assert.match(content, /Enable the Google Drive API/);
+  assert.doesNotMatch(content, /Create a Google OAuth client/);
 });
 
 test("GitHub OAuth instructions explain every registration field and required toggle", () => {

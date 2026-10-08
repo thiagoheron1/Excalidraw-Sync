@@ -463,6 +463,12 @@
     });
   }
 
+  function reconcileWorkspaces(localInput, remoteInput, strategy = "merge") {
+    if (strategy === "pull") return normalizeWorkspace(remoteInput);
+    if (strategy === "force-push") return normalizeWorkspace(localInput);
+    return remoteInput ? mergeWorkspaces(localInput, remoteInput) : normalizeWorkspace(localInput);
+  }
+
   function descendantFolderIds(folders, rootId) {
     const result = new Set([rootId]);
     let changed = true;
@@ -846,6 +852,7 @@
     isStarterWorkspace,
     workspaceFromProviderIndex,
     mergeWorkspaces,
+    reconcileWorkspaces,
     removeEntry,
     trashEntry,
     activeTrashItems,

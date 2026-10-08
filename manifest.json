@@ -7,16 +7,12 @@
   "permissions": [
     "storage",
     "unlimitedStorage",
-    "identity",
     "nativeMessaging"
   ],
   "host_permissions": [
     "https://excalidraw.com/*",
     "https://api.github.com/*",
-    "https://github.com/login/*",
-    "https://accounts.google.com/*",
-    "https://oauth2.googleapis.com/*",
-    "https://www.googleapis.com/*"
+    "https://github.com/login/*"
   ],
   "background": {
     "service_worker": "background.js"

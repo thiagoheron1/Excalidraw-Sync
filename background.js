@@ -77,20 +77,6 @@ function defaultProviderState() {
       lastErrorAt: null,
       repositoryUrl: null,
     },
-    googleDrive: {
-      config: {
-        clientId: "",
-        folderName: "Excalidraw",
-        visibility: "private",
-      },
-      auth: null,
-      account: null,
-      folderId: null,
-      lastSyncAt: null,
-      lastError: null,
-      lastErrorAt: null,
-      folderUrl: null,
-    },
   };
 }
 
@@ -105,9 +91,7 @@ async function readProviders() {
     return ExcalidrawSyncSecurity.mergeProviderStorage(defaults, {}, sessionStored || {}, credentials || {});
   }
   const hasLegacyCredentials = ExcalidrawSyncSecurity.hasSensitiveProviderData(stored);
-  const hasLegacySessionCredentials = Boolean(
-    sessionStored?.github?.auth || sessionStored?.googleDrive?.auth,
-  );
+  const hasLegacySessionCredentials = Boolean(sessionStored?.github?.auth);
   const legacySession = hasLegacyCredentials
     ? ExcalidrawSyncSecurity.providerSessionState(stored)
     : {};
@@ -156,15 +140,6 @@ function publicProviderState(providers) {
       lastError: providers.github.lastError,
       lastErrorAt: providers.github.lastErrorAt,
       repositoryUrl: providers.github.repositoryUrl,
-    },
-    googleDrive: {
-      config: providers.googleDrive.config,
-      connected: Boolean(providers.googleDrive.auth?.accessToken),
-      account: providers.googleDrive.account,
-      lastSyncAt: providers.googleDrive.lastSyncAt,
-      lastError: providers.googleDrive.lastError,
-      lastErrorAt: providers.googleDrive.lastErrorAt,
-      folderUrl: providers.googleDrive.folderUrl,
     },
   };
 }
@@ -468,7 +443,7 @@ async function readGitHubWorkspace(repository, rootDirectory, token) {
   return ExcalidrawSyncCore.workspaceFromProviderIndex(index, scenes);
 }
 
-async function githubSync(workspaceInput, providers) {
+async function githubSync(workspaceInput, providers, { force = false } = {}) {
   if (!providers.github.auth?.accessToken) {
     return { skipped: true };
   }
@@ -482,9 +457,11 @@ async function githubSync(workspaceInput, providers) {
     providers.github.config.rootDirectory,
     token,
   );
-  const workspace = remoteWorkspace
-    ? ExcalidrawSyncCore.mergeWorkspaces(workspaceInput, remoteWorkspace)
-    : ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
+  const workspace = ExcalidrawSyncCore.reconcileWorkspaces(
+    workspaceInput,
+    remoteWorkspace,
+    force ? "force-push" : "merge",
+  );
   const desiredFiles = ExcalidrawSyncCore.buildProviderFiles(
     workspace,
     providers.github.config.rootDirectory,
@@ -537,426 +514,33 @@ async function githubSync(workspaceInput, providers) {
   return { skipped: false, changed, url: repository.html_url, workspace };
 }
 
-async function launchWebAuthFlow(details) {
-  return apiCall(extensionApi.identity, "launchWebAuthFlow", details);
-}
-
-async function googleToken(providers) {
-  const auth = providers.googleDrive.auth;
-  if (!auth) {
-    throw new Error("Connect Google Drive first.");
-  }
-  if (auth.expiresAt > Date.now() + 60_000) {
-    return auth.accessToken;
-  }
-  if (!auth.refreshToken) {
-    throw new Error("Google Drive access expired. Connect again.");
-  }
-  const body = await fetchJson("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: providers.googleDrive.config.clientId,
-      refresh_token: auth.refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
-  providers.googleDrive.auth = {
-    ...auth,
-    accessToken: body.access_token,
-    expiresAt: Date.now() + body.expires_in * 1000,
-  };
-  await writeProviders(providers);
-  return body.access_token;
-}
-
-async function googleConnect() {
-  const providers = await readProviders();
-  const clientId = providers.googleDrive.config.clientId.trim();
-  if (!clientId) {
-    throw new Error("Add a Google OAuth client ID first.");
-  }
-  const verifierBytes = crypto.getRandomValues(new Uint8Array(48));
-  const verifier = base64Url(verifierBytes);
-  const challenge = base64Url(
-    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))),
-  );
-  const state = base64Url(crypto.getRandomValues(new Uint8Array(18)));
-  const redirectUri = extensionApi.identity.getRedirectURL("google");
-  const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  authUrl.search = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: "code",
-    scope: "openid email https://www.googleapis.com/auth/drive.file",
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    access_type: "offline",
-    prompt: "consent",
-    state,
-  }).toString();
-  const redirect = await launchWebAuthFlow({ url: authUrl.toString(), interactive: true });
-  if (!redirect) {
-    throw new Error("Google sign-in was cancelled.");
-  }
-  const resultUrl = new URL(redirect);
-  if (resultUrl.searchParams.get("state") !== state) {
-    throw new Error("Google sign-in could not be verified.");
-  }
-  const code = resultUrl.searchParams.get("code");
-  if (!code) {
-    throw new Error(resultUrl.searchParams.get("error") || "Google sign-in returned no authorization code.");
-  }
-  const tokens = await fetchJson("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      code,
-      code_verifier: verifier,
-      redirect_uri: redirectUri,
-      grant_type: "authorization_code",
-    }),
-  });
-  const account = await fetchJson("https://www.googleapis.com/oauth2/v2/userinfo", {
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
-  });
-  providers.googleDrive.auth = {
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token || null,
-    expiresAt: Date.now() + tokens.expires_in * 1000,
-  };
-  providers.googleDrive.account = { email: account.email, picture: account.picture };
-  providers.googleDrive.lastError = null;
-  providers.googleDrive.lastErrorAt = null;
-  providers.syncAuthority = "googleDrive";
-  await writeProviders(providers);
-  return publicProviderState(providers).googleDrive;
-}
-
-async function driveRequest(path, token, options = {}) {
-  return fetchJson(`https://www.googleapis.com${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(options.body && typeof options.body === "string" ? { "Content-Type": "application/json" } : {}),
-      ...options.headers,
-    },
-  });
-}
-
-function driveQuery(value) {
-  return encodeURIComponent(value);
-}
-
-async function listDriveWorkspaceItems(workspaceId, token) {
-  const items = [];
-  let pageToken = "";
-  do {
-    const query = `appProperties has { key='excalidrawSyncWorkspace' and value='${workspaceId.replace(/'/g, "\\'")}' }`;
-    const params = new URLSearchParams({
-      q: query,
-      fields: "nextPageToken,files(id,name,mimeType,parents,appProperties,modifiedTime,trashed)",
-      pageSize: "1000",
-      spaces: "drive",
-    });
-    if (pageToken) {
-      params.set("pageToken", pageToken);
-    }
-    const result = await driveRequest(`/drive/v3/files?${params}`, token);
-    items.push(...(result.files || []));
-    pageToken = result.nextPageToken || "";
-  } while (pageToken);
-  return items;
-}
-
-async function listDriveWorkspaceRoots(token) {
-  const params = new URLSearchParams({
-    q: "appProperties has { key='excalidrawSyncKind' and value='root' } and trashed=false",
-    fields: "files(id,name,mimeType,parents,appProperties,modifiedTime,trashed)",
-    pageSize: "1000",
-    spaces: "drive",
-  });
-  const result = await driveRequest(`/drive/v3/files?${params}`, token);
-  return result.files || [];
-}
-
-async function readDriveWorkspace(root, items, token) {
-  if (!root) return null;
-  const generatedAt = items.reduce(
-    (latest, item) => item.modifiedTime > latest ? item.modifiedTime : latest,
-    root.modifiedTime || new Date(0).toISOString(),
-  );
-  const scenes = {};
-  const remoteFiles = items.filter((item) =>
-    !item.trashed && item.appProperties?.excalidrawSyncKind === "file" && item.appProperties?.excalidrawSyncId,
-  );
-  const remoteFolders = items.filter((item) =>
-    !item.trashed && item.appProperties?.excalidrawSyncKind === "folder" && item.appProperties?.excalidrawSyncId,
-  );
-  const liveItemsBySyncKey = new Map(
-    [...remoteFiles, ...remoteFolders].map((item) => [
-      `${item.appProperties.excalidrawSyncKind}:${item.appProperties.excalidrawSyncId}`,
-      item,
-    ]),
-  );
-  await Promise.all(remoteFiles.map(async (file) => {
-    scenes[file.id] = await driveRequest(`/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`, token);
-  }));
-  return ExcalidrawSyncCore.workspaceFromProviderIndex({
-    formatVersion: 2,
-    workspaceId: root.appProperties?.excalidrawSyncWorkspace,
-    workspaceName: root.name,
-    generatedAt,
-        folders: remoteFolders.map((item) => ({
-          id: item.appProperties.excalidrawSyncId,
-          parentId: item.appProperties.excalidrawSyncParentId || null,
-          name: item.name,
-      createdAt: item.modifiedTime,
-      updatedAt: item.modifiedTime,
-    })),
-    files: remoteFiles.map((item) => ({
-      id: item.appProperties.excalidrawSyncId,
-      folderId: item.appProperties.excalidrawSyncFolderId || null,
-      path: item.id,
-      name: item.name.replace(/\.excalidraw$/i, ""),
-      createdAt: item.modifiedTime,
-      updatedAt: item.modifiedTime,
-    })),
-    tombstones: items.filter((item) => item.trashed && ["file", "folder"].includes(item.appProperties?.excalidrawSyncKind)).map((item) => {
-      const kind = item.appProperties.excalidrawSyncKind;
-      const id = item.appProperties.excalidrawSyncId;
-      const replacement = liveItemsBySyncKey.get(`${kind}:${id}`);
-      const restoredAt = replacement && new Date(replacement.modifiedTime) > new Date(item.modifiedTime)
-        ? replacement.modifiedTime
-        : null;
-      return { kind, id, deletedAt: item.modifiedTime, restoredAt };
-    }),
-  }, scenes);
-}
-
-async function createDriveMetadata(metadata, token) {
-  return driveRequest("/drive/v3/files?fields=id,name,mimeType,parents,appProperties", token, {
-    method: "POST",
-    body: JSON.stringify(metadata),
-  });
-}
-
-async function patchDriveMetadata(id, metadata, token, parentChange = null) {
-  const params = new URLSearchParams({ fields: "id,name,mimeType,parents,appProperties" });
-  if (parentChange?.add) {
-    params.set("addParents", parentChange.add);
-  }
-  if (parentChange?.remove) {
-    params.set("removeParents", parentChange.remove);
-  }
-  return driveRequest(`/drive/v3/files/${encodeURIComponent(id)}?${params}`, token, {
-    method: "PATCH",
-    body: JSON.stringify(metadata),
-  });
-}
-
-async function uploadDriveJson(id, metadata, content, token) {
-  const boundary = `excalidraw_sync_${crypto.randomUUID?.() || Date.now()}`;
-  const body = [
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
-    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n`,
-    `--${boundary}--`,
-  ].join("");
-  const path = id
-    ? `/upload/drive/v3/files/${encodeURIComponent(id)}?uploadType=multipart&fields=id,name,parents,appProperties`
-    : "/upload/drive/v3/files?uploadType=multipart&fields=id,name,parents,appProperties";
-  return fetchJson(`https://www.googleapis.com${path}`, {
-    method: id ? "PATCH" : "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": `multipart/related; boundary=${boundary}`,
-    },
-    body,
-  });
-}
-
-async function setDriveVisibility(folderId, visibility, token) {
-  const permissions = await driveRequest(
-    `/drive/v3/files/${encodeURIComponent(folderId)}/permissions?fields=permissions(id,type,role)`,
+async function githubPull(providers) {
+  if (!providers.github.auth?.accessToken) throw new Error("Connect GitHub first.");
+  const token = await githubToken(providers);
+  const repository = await ensureGitHubRepository(providers);
+  const workspace = await readGitHubWorkspace(
+    repository,
+    providers.github.config.rootDirectory,
     token,
   );
-  const publicPermission = (permissions.permissions || []).find((permission) => permission.type === "anyone");
-  if (visibility === "public" && !publicPermission) {
-    await driveRequest(`/drive/v3/files/${encodeURIComponent(folderId)}/permissions`, token, {
-      method: "POST",
-      body: JSON.stringify({ type: "anyone", role: "reader" }),
-    });
-  }
-  if (visibility !== "public" && publicPermission) {
-    await driveRequest(
-      `/drive/v3/files/${encodeURIComponent(folderId)}/permissions/${encodeURIComponent(publicPermission.id)}`,
-      token,
-      { method: "DELETE" },
-    );
-  }
+  if (!workspace) throw new Error("No ExcaliSync workspace was found in this repository.");
+  providers.github.repositoryUrl = repository.html_url;
+  providers.github.lastSyncAt = new Date().toISOString();
+  providers.github.lastError = null;
+  providers.github.lastErrorAt = null;
+  return { workspace, url: repository.html_url };
 }
 
-async function googleDriveSync(workspaceInput, providers) {
-  if (!providers.googleDrive.auth?.accessToken) {
-    return { skipped: true };
-  }
-  const token = await googleToken(providers);
-  const roots = await listDriveWorkspaceRoots(token);
-  let root = roots.find((item) => item.id === providers.googleDrive.folderId)
-    || roots.find((item) => item.name === (providers.googleDrive.config.folderName.trim() || "Excalidraw"));
-  let items = root
-    ? await listDriveWorkspaceItems(root.appProperties?.excalidrawSyncWorkspace, token)
-    : [];
-  const remoteWorkspace = await readDriveWorkspace(root, items, token);
-  const workspace = remoteWorkspace
-    ? ExcalidrawSyncCore.mergeWorkspaces(workspaceInput, remoteWorkspace)
-    : ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
-  const rootMetadata = {
-    name: providers.googleDrive.config.folderName.trim() || "Excalidraw",
-    mimeType: "application/vnd.google-apps.folder",
-    appProperties: {
-      excalidrawSyncWorkspace: workspace.id,
-      excalidrawSyncKind: "root",
-    },
-  };
-  if (!root) {
-    root = await createDriveMetadata(rootMetadata, token);
-    items.push(root);
-  } else if (root.name !== rootMetadata.name) {
-    root = await patchDriveMetadata(root.id, { name: rootMetadata.name }, token);
-  }
-  await setDriveVisibility(root.id, providers.googleDrive.config.visibility, token);
-
-  const foldersBySyncId = new Map(
-    items
-      .filter((item) => !item.trashed && item.appProperties?.excalidrawSyncKind === "folder")
-      .map((item) => [item.appProperties.excalidrawSyncId, item]),
-  );
-      const liveFolderIds = new Set();
-      const folderPromises = new Map();
-      const ensureDriveFolder = async (folder) => {
-        if (folderPromises.has(folder.id)) return folderPromises.get(folder.id);
-        const operation = (async () => {
-          const parentFolder = folder.parentId
-            ? workspace.folders.find((candidate) => candidate.id === folder.parentId)
-            : null;
-          const parentRemote = parentFolder ? await ensureDriveFolder(parentFolder) : root;
-          const desiredParentId = parentRemote?.id || root.id;
-          const metadata = {
-            name: folder.name,
-            mimeType: "application/vnd.google-apps.folder",
-            appProperties: {
-              excalidrawSyncWorkspace: workspace.id,
-              excalidrawSyncKind: "folder",
-              excalidrawSyncId: folder.id,
-              excalidrawSyncParentId: folder.parentId || "",
-            },
-          };
-          let remote = foldersBySyncId.get(folder.id);
-          if (!remote) {
-            remote = await createDriveMetadata({ ...metadata, parents: [desiredParentId] }, token);
-          } else if (remote.name !== folder.name || remote.parents?.[0] !== desiredParentId || remote.appProperties?.excalidrawSyncParentId !== (folder.parentId || "")) {
-            remote = await patchDriveMetadata(
-              remote.id,
-              metadata,
-              remote.parents?.[0] !== desiredParentId ? { add: desiredParentId, remove: remote.parents?.join(",") } : null,
-            );
-          }
-          foldersBySyncId.set(folder.id, remote);
-          return remote;
-        })();
-        folderPromises.set(folder.id, operation);
-        return operation;
-      };
-      for (const folder of workspace.folders) {
-        liveFolderIds.add(folder.id);
-        await ensureDriveFolder(folder);
-      }
-
-  const remoteFilesBySyncId = new Map(
-    items
-      .filter((item) => !item.trashed && item.appProperties?.excalidrawSyncKind === "file")
-      .map((item) => [item.appProperties.excalidrawSyncId, item]),
-  );
-  const liveFileIds = new Set();
-  const changed = [];
-  for (const file of workspace.files) {
-    liveFileIds.add(file.id);
-    const folder = foldersBySyncId.get(file.folderId);
-    const parentId = folder?.id || root.id;
-    const scene = ExcalidrawSyncCore.normalizeScene(file.scene);
-    const content = `${JSON.stringify(scene, null, 2)}\n`;
-    const contentHash = ExcalidrawSyncCore.hashString(content);
-    const name = `${file.name.replace(/[\\/:*?"<>|]/g, "-") || "Untitled"}.excalidraw`;
-    const metadata = {
-      name,
-      mimeType: "application/json",
-      parents: [parentId],
-      appProperties: {
-        excalidrawSyncWorkspace: workspace.id,
-        excalidrawSyncKind: "file",
-        excalidrawSyncId: file.id,
-        excalidrawSyncFolderId: file.folderId || "",
-        contentHash,
-      },
-    };
-    const remote = remoteFilesBySyncId.get(file.id);
-    const needsUpdate =
-      !remote ||
-      remote.name !== name ||
-      remote.parents?.[0] !== parentId ||
-      remote.appProperties?.contentHash !== contentHash;
-    if (needsUpdate) {
-      if (remote && remote.parents?.[0] !== parentId) {
-        await patchDriveMetadata(
-          remote.id,
-          {},
-          token,
-          { add: parentId, remove: remote.parents?.join(",") },
-        );
-      }
-      const uploadMetadata = remote ? { ...metadata } : metadata;
-      if (remote) {
-        delete uploadMetadata.parents;
-      }
-      const uploaded = await uploadDriveJson(remote?.id || null, uploadMetadata, content, token);
-      remoteFilesBySyncId.set(file.id, uploaded);
-      changed.push(name);
-    }
-  }
-
-  for (const [syncId, remote] of remoteFilesBySyncId) {
-    if (!liveFileIds.has(syncId)) {
-      await patchDriveMetadata(remote.id, { trashed: true }, token);
-      changed.push(remote.name);
-    }
-  }
-  for (const [syncId, remote] of foldersBySyncId) {
-    if (!liveFolderIds.has(syncId)) {
-      await patchDriveMetadata(remote.id, { trashed: true }, token);
-      changed.push(remote.name);
-    }
-  }
-  providers.googleDrive.folderId = root.id;
-  providers.googleDrive.folderUrl = `https://drive.google.com/drive/folders/${root.id}`;
-  providers.googleDrive.lastSyncAt = new Date().toISOString();
-  providers.googleDrive.lastError = null;
-  providers.googleDrive.lastErrorAt = null;
-  return { skipped: false, changed, url: providers.googleDrive.folderUrl, workspace };
-}
 
 function selectedSyncProvider(providers) {
-  return ["github", "googleDrive"].includes(providers.syncAuthority)
-    ? providers.syncAuthority
-    : "local";
+  return providers.syncAuthority === "github" ? "github" : "local";
 }
 
 async function syncAll(workspaceInput) {
   let workspace = ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
   const providers = await readProviders();
   const authority = selectedSyncProvider(providers);
-  const result = { github: { skipped: true }, googleDrive: { skipped: true } };
+  const result = { github: { skipped: true } };
   if (authority === "github" && providers.github.auth?.accessToken) {
     try {
       result.github = await githubSync(workspace, providers);
@@ -975,16 +559,6 @@ async function syncAll(workspaceInput) {
         providers.github.lastErrorAt = new Date().toISOString();
         result.github = { error: providers.github.lastError };
       }
-    }
-  }
-  if (authority === "googleDrive" && providers.googleDrive.auth?.accessToken) {
-    try {
-      result.googleDrive = await googleDriveSync(workspace, providers);
-      workspace = result.googleDrive.workspace || workspace;
-    } catch (error) {
-      providers.googleDrive.lastError = cleanMessage(error);
-      providers.googleDrive.lastErrorAt = new Date().toISOString();
-      result.googleDrive = { error: providers.googleDrive.lastError };
     }
   }
   await writeProviders(providers);
@@ -1006,16 +580,8 @@ async function handleMessage(message) {
           rootDirectory: String(message.github.rootDirectory || "Excalidraw").trim(),
         };
       }
-      if (["local", "github", "googleDrive"].includes(message.syncAuthority)) {
+      if (["local", "github"].includes(message.syncAuthority)) {
         providers.syncAuthority = message.syncAuthority;
-      }
-      if (message.googleDrive) {
-        providers.googleDrive.config = {
-          ...providers.googleDrive.config,
-          clientId: String(message.googleDrive.clientId || "").trim(),
-          folderName: String(message.googleDrive.folderName || "Excalidraw").trim(),
-          visibility: message.googleDrive.visibility === "public" ? "public" : "private",
-        };
       }
       await writeProviders(providers);
       return publicProviderState(providers);
@@ -1024,17 +590,24 @@ async function handleMessage(message) {
       return githubStartAuth();
     case "github:pollAuth":
       return githubPollAuth();
-    case "google:connect":
-      return googleConnect();
+    case "github:pull": {
+      const providers = await readProviders();
+      const result = await githubPull(providers);
+      await writeProviders(providers);
+      return { ...result, providers: publicProviderState(providers) };
+    }
+    case "github:push": {
+      const providers = await readProviders();
+      const result = await githubSync(message.workspace, providers, { force: Boolean(message.force) });
+      await writeProviders(providers);
+      return { ...result, providers: publicProviderState(providers) };
+    }
     case "provider:disconnect": {
       const providers = await readProviders();
       if (message.provider === "github") {
         providers.github.auth = null;
         providers.github.account = null;
         providers.github.pendingAuth = null;
-      } else if (message.provider === "googleDrive") {
-        providers.googleDrive.auth = null;
-        providers.googleDrive.account = null;
       }
       await writeProviders(providers);
       return publicProviderState(providers);

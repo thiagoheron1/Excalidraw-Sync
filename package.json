@@ -2,7 +2,7 @@
   "name": "excalidraw-sync",
   "version": "0.4.0",
   "private": true,
-  "description": "A local-first Excalidraw file manager with GitHub and Google Drive sync.",
+  "description": "A local-first Excalidraw file manager with GitHub sync.",
   "scripts": {
     "test": "node --test",
     "check": "node --check shared/core.js && node --check shared/security.js && node --check shared/ui-events.js && node --check background.js && node --check content.js && node --check vault.js && node --check native-host/host.js && node scripts/validate-manifest.js",

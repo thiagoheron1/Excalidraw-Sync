@@ -95,7 +95,7 @@ test("one cloud authority is selected while local storage remains the offline fa
   assert.match(content, /select name="syncAuthority"/);
   assert.match(content, /Local storage remains the offline fallback/);
   assert.match(content, /state\.providers\.syncAuthority = "github"/);
-  assert.match(content, /state\.providers\.syncAuthority = "googleDrive"/);
+  assert.doesNotMatch(content, /state\.providers\.syncAuthority = "googleDrive"/);
 });
 
 test("renaming files and folders produces new provider paths and queues cloud cleanup", () => {

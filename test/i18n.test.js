@@ -37,6 +37,15 @@ test("rendered controls translate without changing user-created names", () => {
   assert.equal(dom.window.document.querySelector("strong").textContent, "New file");
 });
 
+test("GitHub pull, push, and force-push controls are localized", () => {
+  assert.equal(i18n.translate("Pull", "pt-BR"), "Baixar");
+  assert.equal(i18n.translate("Push", "es"), "Enviar");
+  assert.equal(i18n.translate("Force push", "fr"), "Forcer l’envoi");
+  assert.equal(i18n.translate("Pull and replace local", "de"), "Abrufen und lokal ersetzen");
+  assert.equal(i18n.translate("Pull from GitHub", "pt-BR"), "Baixar do GitHub");
+  assert.equal(i18n.translate("Push to GitHub", "de"), "An GitHub senden");
+});
+
 test("manifest metadata has locale catalogs for every supported language", () => {
   assert.equal(manifest.default_locale, "en");
   assert.ok(manifest.content_scripts[0].js.indexOf("shared/i18n.js") < manifest.content_scripts[0].js.indexOf("content.js"));
