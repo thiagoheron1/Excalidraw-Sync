@@ -1,6 +1,6 @@
 # Excalidraw Sync
 
-Excalidraw Sync adds a file-and-folder sidebar to [Excalidraw](https://excalidraw.com/). Drawings stay available locally and can be synchronized automatically to a GitHub repository and/or a Google Drive folder.
+Excalidraw Sync adds a file-and-folder sidebar to [Excalidraw](https://excalidraw.com/). Drawings stay available locally and can be synchronized automatically to one selected cloud authority: a GitHub repository or a Google Drive folder.
 
 ## What works
 
@@ -8,7 +8,7 @@ Excalidraw Sync adds a file-and-folder sidebar to [Excalidraw](https://excalidra
 - Folders, search, pinned files, rename/move, file and read-only-link import, drag-and-drop ordering, and one-click switching.
 - The current file is saved before another file opens, then Excalidraw changes scenes in place while the Files sidebar stays open.
 - Background autosave when Excalidraw's native scene changes.
-- Light, dark, and automatic system themes.
+- Light, dark, automatic system, and default follow-Excalidraw themes.
 - An optional native helper that writes real files to `~/.excalidraw-sync`, plus browser and Excalidraw-site recovery mirrors.
 - Configurable save behavior: after each detected edit, at 5-second to 5-minute intervals, or manual only.
 - Latest local-save and cloud-sync timestamps, with yellow pending and red stale warnings after a configurable threshold.
@@ -25,7 +25,9 @@ Excalidraw Sync adds a file-and-folder sidebar to [Excalidraw](https://excalidra
 - A guarded **Delete all local files** action that requires typing `delete` and removes both the extension vault and reinstall recovery copy.
 - Manifest V3 packages for Chrome, Edge, Opera, and Firefox; Safari conversion instructions are below.
 
-Cloud synchronization is intentionally outbound in this first version: local changes are uploaded automatically, while edits made directly to remote `.excalidraw` files are not pulled back or merged. This avoids silently overwriting the currently open canvas.
+Local storage is always written first and acts as the offline working copy. The selected GitHub or Google Drive target is the cloud authority shared between machines. On reconnect, ExcaliSync downloads its managed index, merges files and folders by stable ID and newest modification time, applies deletion tombstones, then uploads the reconciled workspace. Selecting a different authority and saving settings starts the same reconciliation with that provider. Renames are synchronized as a new managed path plus removal of the old managed path.
+
+Only one cloud authority is active at a time. This avoids competing GitHub and Google Drive histories while still allowing either provider to be configured. If two machines edit the same drawing while offline, the edit with the newest modification time wins; different drawings merge independently.
 
 ## Local vault
 
@@ -87,7 +89,7 @@ The extension uses GitHub Device Flow. Device Flow requires a public client ID b
 7. For **Redirect URI**, enter `https://excalidraw.com/`. GitHub requires this field even though ExcaliSync uses Device Flow and does not redirect to it.
 8. Leave **Allow wildcard matching** turned off.
 9. Turn **Enable Device Flow** on.
-10. Turn **Expire user access tokens** off for this version. ExcaliSync does not yet exchange GitHub refresh tokens, so an expiring token would eventually interrupt synchronization.
+10. Keep **Expire user access tokens** on. ExcaliSync rotates Device Flow access and refresh tokens without requiring a client secret.
 11. Select **Register application**.
 12. Copy the **Client ID**. Do not generate, copy, or paste a client secret into the extension.
 13. In ExcaliSync, open **Manage sync → GitHub** and paste the Client ID.
@@ -138,8 +140,8 @@ OAuth redirect handling differs by browser and store identity. For a production 
 
 - OAuth **client IDs are public identifiers**. They appear in the extension and authorization requests and cannot be encrypted or hidden from users.
 - Never add a GitHub or Google **client secret** to source code, the manifest, `.env` files included in a package, extension storage, screenshots, issues, or chat messages.
-- Access tokens, refresh tokens, and GitHub device codes are treated as secrets. Excalidraw Sync keeps them in `storage.session`, which Chrome keeps in memory and does not expose to content scripts by default. They are cleared when the browser restarts or the extension is disabled, reloaded, or updated, so reconnecting is expected.
-- Persistent extension storage contains provider configuration and public client IDs only. Existing tokens from older versions are migrated out of persistent storage on first use.
+- Access and refresh tokens are treated as secrets and stored in a dedicated extension-owned credential record so the connection survives browser and extension-worker restarts. They are never exposed through provider-status messages, page DOM, diagrams, logs, or Git commits. Pending GitHub device codes remain session-only.
+- GitHub and Google refresh tokens rotate expired access tokens automatically. Disconnecting a provider clears its stored credential record.
 - OAuth and API requests use HTTPS. Diagnostics sanitize token-like values before displaying errors.
 - This design greatly reduces token persistence, but no extension can guarantee protection if the browser profile, operating system, or another privileged extension is compromised.
 

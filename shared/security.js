@@ -14,15 +14,23 @@
       pendingAuth: _googlePendingAuth,
       ...googleDrive
     } = providers.googleDrive || {};
-    return { github, googleDrive };
+    return { syncAuthority: providers.syncAuthority || "local", github, googleDrive };
   }
 
   function providerSessionState(providers = {}) {
     return {
       github: {
+        pendingAuth: providers.github?.pendingAuth || null,
+      },
+      googleDrive: {},
+    };
+  }
+
+  function providerCredentialState(providers = {}) {
+    return {
+      github: {
         auth: providers.github?.auth || null,
         account: providers.github?.account || null,
-        pendingAuth: providers.github?.pendingAuth || null,
       },
       googleDrive: {
         auth: providers.googleDrive?.auth || null,
@@ -39,18 +47,22 @@
     );
   }
 
-  function mergeProviderStorage(defaults, persistent = {}, session = {}) {
+  function mergeProviderStorage(defaults, persistent = {}, session = {}, credentials = {}) {
     return {
+      syncAuthority: ["local", "github", "googleDrive"].includes(persistent.syncAuthority)
+        ? persistent.syncAuthority
+        : defaults.syncAuthority || "local",
       github: {
         ...defaults.github,
         ...persistent.github,
-        ...session.github,
+        ...credentials.github,
+        pendingAuth: session.github?.pendingAuth || null,
         config: { ...defaults.github.config, ...persistent.github?.config },
       },
       googleDrive: {
         ...defaults.googleDrive,
         ...persistent.googleDrive,
-        ...session.googleDrive,
+        ...credentials.googleDrive,
         config: { ...defaults.googleDrive.config, ...persistent.googleDrive?.config },
       },
     };
@@ -59,6 +71,7 @@
   const api = {
     hasSensitiveProviderData,
     mergeProviderStorage,
+    providerCredentialState,
     providerPersistentState,
     providerSessionState,
   };

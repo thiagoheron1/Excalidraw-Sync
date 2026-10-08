@@ -2,7 +2,10 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const security = require("../shared/security.js");
+const background = fs.readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
 
 const providers = {
   github: {
@@ -31,11 +34,51 @@ test("persistent provider state contains public configuration but no OAuth crede
   assert.equal(serialized.includes("google-refresh-token"), false);
 });
 
-test("OAuth credentials and pending device codes are isolated to session state", () => {
+test("pending device codes are isolated to session state", () => {
   const session = security.providerSessionState(providers);
 
-  assert.equal(session.github.auth.accessToken, "github-secret-token");
   assert.equal(session.github.pendingAuth.deviceCode, "secret-device-code");
-  assert.equal(session.googleDrive.auth.refreshToken, "google-refresh-token");
+  assert.equal(session.github.auth, undefined);
+  assert.equal(session.googleDrive.auth, undefined);
   assert.equal(security.hasSensitiveProviderData(providers), true);
+});
+
+test("OAuth credentials can survive a worker or extension reload without entering public provider state", () => {
+  const credentials = security.providerCredentialState(providers);
+  const persistent = security.providerPersistentState(providers);
+  const serializedPersistent = JSON.stringify(persistent);
+
+  assert.equal(credentials.github.auth.accessToken, "github-secret-token");
+  assert.equal(credentials.googleDrive.auth.refreshToken, "google-refresh-token");
+  assert.equal(credentials.github.pendingAuth, undefined);
+  assert.equal(serializedPersistent.includes("github-secret-token"), false);
+  const restored = security.mergeProviderStorage({ github: {}, googleDrive: {} }, persistent, {}, credentials);
+  assert.equal(restored.github.auth.accessToken, "github-secret-token");
+  assert.match(background, /PROVIDER_CREDENTIALS_KEY/);
+  assert.match(background, /storageSet\(PROVIDER_CREDENTIALS_KEY, ExcalidrawSyncSecurity\.providerCredentialState\(providers\)\)/);
+});
+
+test("stale session state cannot disconnect durable GitHub credentials after a page reload", () => {
+  const defaults = {
+    syncAuthority: "local",
+    github: { config: {}, auth: null, account: null, pendingAuth: null },
+    googleDrive: { config: {}, auth: null, account: null },
+  };
+  const persistent = security.providerPersistentState(providers);
+  const credentials = security.providerCredentialState(providers);
+  const staleSessionFromPreviousExtensionVersion = {
+    github: { auth: null, account: null, pendingAuth: null },
+    googleDrive: { auth: null, account: null },
+  };
+
+  const restored = security.mergeProviderStorage(
+    defaults,
+    persistent,
+    staleSessionFromPreviousExtensionVersion,
+    credentials,
+  );
+
+  assert.equal(restored.github.auth.accessToken, "github-secret-token");
+  assert.equal(restored.github.account.login, "octocat");
+  assert.equal(restored.googleDrive.auth.accessToken, "google-secret-token");
 });

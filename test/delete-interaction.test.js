@@ -8,9 +8,13 @@ const path = require("node:path");
 const content = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
 
 test("file and folder rows expose keyboard-accessible delete controls", () => {
-  assert.match(content, /data-action=\"delete\" data-kind=\"file\"/);
-  assert.match(content, /data-action=\"delete\" data-kind=\"folder\"/);
-  assert.match(content, /aria-label=\"Delete/);
+  assert.match(content, /data-action=\"file-more\"[^>]*aria-haspopup=\"menu\"/);
+  assert.match(content, /label: \"Delete file\"/);
+  assert.match(content, /confirmDelete\(\"file\", fileId\)/);
+  assert.match(content, /data-action=\"folder-menu\"/);
+  assert.match(content, /label: \"Delete folder\"/);
+  assert.match(content, /confirmDelete\(\"folder\", folderId\)/);
+  assert.match(content, /role=\"menuitem\"/);
 });
 
 test("swipe and delete button both route through confirmation", () => {

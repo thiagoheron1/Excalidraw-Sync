@@ -4,14 +4,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { getFileSyncHealth, getSaveHealth, normalizeSaveSettings } = require("../shared/ui-events.js");
 
-test("save settings support edit, interval, and manual modes", () => {
-  assert.deepEqual(normalizeSaveSettings({ mode: "interval", intervalSeconds: "15", staleMinutes: "10" }), {
+test("save settings support edit, interval, manual modes, and a debounced cloud sync", () => {
+  assert.deepEqual(normalizeSaveSettings({ mode: "interval", intervalSeconds: "15", syncDelaySeconds: "60", staleMinutes: "10" }), {
     mode: "interval",
     intervalSeconds: 15,
+    syncDelaySeconds: 60,
     staleMinutes: 10,
     notificationsEnabled: true,
   });
   assert.equal(normalizeSaveSettings({ mode: "invalid", intervalSeconds: 7 }).mode, "edit");
+  assert.equal(normalizeSaveSettings({ syncDelaySeconds: 7 }).syncDelaySeconds, 30);
   assert.equal(normalizeSaveSettings({ notificationsEnabled: false }).notificationsEnabled, false);
 });
 

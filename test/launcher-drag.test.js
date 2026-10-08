@@ -6,7 +6,12 @@ const { JSDOM } = require("jsdom");
 const {
   attachDraggableLauncher,
   clampLauncherPosition,
+  positionLauncherElement,
 } = require("../shared/ui-events.js");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const content = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
 
 function pointerEvent(window, type, properties) {
   const event = new window.Event(type, { bubbles: true, cancelable: true });
@@ -21,6 +26,23 @@ test("launcher position is constrained to the visible viewport", () => {
     clampLauncherPosition({ x: -40, y: 900 }, { width: 320, height: 480 }, { width: 46, height: 46 }),
     { x: 8, y: 426 },
   );
+});
+
+test("the default top-right launcher sits below Excalidraw controls", () => {
+  assert.match(content, /\.launcher \{\s*position: fixed; right: 12px; top: 70px;/);
+  assert.match(content, /\{ x: window\.innerWidth - size\.width - 12, y: 70 \}/);
+});
+
+test("positioning the launcher cannot stretch it between left and right offsets", () => {
+  const dom = new JSDOM("<!doctype html><button style='right:112px;width:64px;height:62px'>Launcher</button>");
+  const button = dom.window.document.querySelector("button");
+
+  positionLauncherElement(button, { x: 620, y: 12 });
+
+  assert.equal(button.style.left, "620px");
+  assert.equal(button.style.right, "auto");
+  assert.equal(button.style.width, "64px");
+  assert.equal(button.style.height, "62px");
 });
 
 test("dragging moves and saves the launcher without opening the sidebar", () => {

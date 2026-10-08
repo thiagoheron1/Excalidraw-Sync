@@ -11,8 +11,8 @@ Please report suspected vulnerabilities privately to the repository owner instea
 ## Security properties
 
 - OAuth client IDs are public identifiers. Client secrets are never required, accepted, or bundled.
-- OAuth access tokens, refresh tokens, accounts, and pending device codes stay in memory-backed extension session storage and are never placed in persistent local storage, page DOM, diagram content, logs, or Git commits.
-- Existing OAuth material written by older versions is migrated out of persistent storage when provider state is first read.
+- OAuth access and refresh tokens use a dedicated extension-owned credential record so provider connections survive browser and extension-worker restarts. The background worker never returns this record to page code. Pending device codes stay in session storage.
+- Provider status/configuration remains separate and secret-free. Tokens are never placed in page DOM, diagram content, logs, or Git commits, and disconnecting clears the provider's credential entry.
 - Session credentials are cleared by browser restart, extension reload/update, or disabling the extension. Users must reconnect afterward.
 - Token-like values are removed from user-visible diagnostics and native error logs; the native helper never receives provider credentials.
 - The content script runs only on `https://excalidraw.com/`.
@@ -24,4 +24,4 @@ Please report suspected vulnerabilities privately to the repository owner instea
 
 ## Limits
 
-Client IDs cannot be kept secret because OAuth requires sending them to the provider. Session-only token storage reduces exposure but cannot protect credentials from a compromised operating system, browser profile, or privileged malicious extension. The uninstall-recovery mirror belongs to the `excalidraw.com` origin, so scripts running on that origin share its storage trust boundary; GitHub or Google Drive should be used as an independent backup for important files.
+Client IDs cannot be kept secret because OAuth requires sending them to the provider. Browser extension storage does not protect credentials from a compromised operating system, browser profile, or privileged malicious extension. The uninstall-recovery mirror belongs to the `excalidraw.com` origin, so scripts running on that origin share its storage trust boundary; GitHub or Google Drive should be used as an independent backup for important files.

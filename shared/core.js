@@ -50,6 +50,7 @@
     const createdAt = nowIso();
     const folder = {
       id: makeId("folder"),
+      parentId: null,
       name: DEFAULT_FOLDER_NAME,
       createdAt,
       updatedAt: createdAt,
@@ -72,6 +73,7 @@
       files: [file],
       trash: [],
       sortMode: "manual",
+      folderSortMode: "manual",
       activeFileId: file.id,
       createdAt,
       updatedAt: createdAt,
@@ -80,7 +82,27 @@
 
   function normalizeWorkspace(input) {
     const source = input && typeof input === "object" ? input : createWorkspace();
-    const folders = Array.isArray(source.folders) ? source.folders.filter(Boolean) : [];
+    const folderSource = Array.isArray(source.folders) ? source.folders.filter(Boolean) : [];
+    const folderIds = new Set(folderSource.map((folder) => folder.id));
+    const folders = folderSource.map((folder) => ({
+      ...folder,
+      parentId: folder.parentId && folder.parentId !== folder.id && folderIds.has(folder.parentId)
+        ? folder.parentId
+        : null,
+    }));
+    const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+    for (const folder of folders) {
+      const seen = new Set([folder.id]);
+      let parentId = folder.parentId;
+      while (parentId) {
+        if (seen.has(parentId)) {
+          folder.parentId = null;
+          break;
+        }
+        seen.add(parentId);
+        parentId = foldersById.get(parentId)?.parentId || null;
+      }
+    }
     const files = Array.isArray(source.files) ? source.files.filter(Boolean) : [];
     const trash = Array.isArray(source.trash) ? source.trash.filter(Boolean) : [];
     return {
@@ -92,6 +114,9 @@
       trash,
       sortMode: ["manual", "alphabetical", "updated"].includes(source.sortMode)
         ? source.sortMode
+        : "manual",
+      folderSortMode: ["manual", "alphabetical", "updated"].includes(source.folderSortMode)
+        ? source.folderSortMode
         : "manual",
       activeFileId: files.some((file) => file.id === source.activeFileId)
         ? source.activeFileId
@@ -144,6 +169,37 @@
     return (hash >>> 0).toString(16).padStart(8, "0");
   }
 
+  async function gitBlobSha(content) {
+    const cryptoApi = globalScope.crypto
+      || (typeof require === "function" ? require("node:crypto").webcrypto : null);
+    if (!cryptoApi?.subtle) throw new Error("Web Crypto is unavailable.");
+    const contentBytes = new TextEncoder().encode(String(content ?? ""));
+    const header = new TextEncoder().encode(`blob ${contentBytes.byteLength}\0`);
+    const joined = new Uint8Array(header.byteLength + contentBytes.byteLength);
+    joined.set(header);
+    joined.set(contentBytes, header.byteLength);
+    const digest = await cryptoApi.subtle.digest("SHA-1", joined);
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function providerChangePlan(desiredFiles, remoteTreeInput, previousPaths = []) {
+    const remoteTree = remoteTreeInput instanceof Map
+      ? remoteTreeInput
+      : new Map(Object.entries(remoteTreeInput || {}));
+    const desiredWithShas = await Promise.all((desiredFiles || []).map(async (file) => ({
+      file,
+      sha: await gitBlobSha(file.content),
+    })));
+    const desiredPaths = new Set(desiredWithShas.map(({ file }) => file.path));
+    return {
+      changedFiles: desiredWithShas
+        .filter(({ file, sha }) => remoteTree.get(file.path) !== sha)
+        .map(({ file }) => file),
+      removedPaths: [...new Set(previousPaths)]
+        .filter((path) => !desiredPaths.has(path) && remoteTree.has(path)),
+    };
+  }
+
   function hashScene(scene) {
     return hashString(stableStringify(normalizeScene(scene)));
   }
@@ -162,19 +218,28 @@
     return path;
   }
 
-  function buildProviderFiles(workspaceInput, rootDirectory = "Excalidraw") {
+  function buildProviderFiles(workspaceInput, rootDirectory = "Excalidraw", { includeFolderPlaceholders = false } = {}) {
     const workspace = normalizeWorkspace(workspaceInput);
     const usedPaths = new Set();
     const foldersById = new Map(workspace.folders.map((folder) => [folder.id, folder]));
+    const folderPath = (folderId, visited = new Set()) => {
+      const folder = foldersById.get(folderId);
+      if (!folder || visited.has(folder.id)) return [];
+      visited.add(folder.id);
+      return [
+        ...folderPath(folder.parentId, visited),
+        slugify(folder.name, "untitled-folder"),
+      ];
+    };
     const requestedRoot = String(rootDirectory || "").trim();
     const hiddenRoot = requestedRoot.startsWith(".");
     const rootName = slugify(requestedRoot.replace(/^\.+/, ""), "excalidraw");
     const root = hiddenRoot ? `.${rootName}` : rootName;
-    const files = workspace.files.map((file) => {
-      const folder = foldersById.get(file.folderId);
-      const folderPath = folder ? slugify(folder.name, "unfiled") : "unfiled";
+    const liveFiles = workspace.files.map((file) => {
+      const pathParts = folderPath(file.folderId);
+      const directory = pathParts.length ? pathParts.join("/") : "unfiled";
       const filename = `${slugify(file.name)}.excalidraw`;
-      const path = uniquePath(`${root}/${folderPath}/${filename}`, usedPaths);
+      const path = uniquePath(`${root}/${directory}/${filename}`, usedPaths);
       const scene = normalizeScene(file.scene || emptyScene());
       return {
         id: file.id,
@@ -185,6 +250,29 @@
         hash: hashScene(scene),
       };
     });
+    const files = [...liveFiles];
+    const foldersWithChildren = new Set(workspace.folders
+      .map((folder) => folder.parentId)
+      .filter(Boolean));
+    const foldersWithFiles = new Set(workspace.files.map((file) => file.folderId).filter(Boolean));
+    const folderPlaceholders = includeFolderPlaceholders
+      ? workspace.folders
+        .filter((folder) => !foldersWithChildren.has(folder.id) && !foldersWithFiles.has(folder.id))
+        .map((folder) => {
+          const directory = folderPath(folder.id).join("/");
+          const path = uniquePath(`${root}/${directory}/.gitkeep`, usedPaths);
+          return {
+            id: `folder-placeholder:${folder.id}`,
+            folderId: folder.id,
+            kind: "folder-placeholder",
+            path,
+            name: ".gitkeep",
+            content: "",
+            hash: hashString(""),
+          };
+        })
+      : [];
+    files.push(...folderPlaceholders);
     const indexPath = `${root}/.excalidraw-sync.json`;
     const index = {
       formatVersion: 2,
@@ -193,15 +281,29 @@
       generatedAt: workspace.updatedAt,
       activeFileId: workspace.activeFileId,
       sortMode: workspace.sortMode,
-      folders: workspace.folders.map(({ id, name, createdAt, updatedAt }) => ({ id, name, createdAt, updatedAt })),
-      files: files.map(({ id, folderId, path, name, hash }) => {
+      folderSortMode: workspace.folderSortMode,
+      folders: workspace.folders.map(({ id, parentId, name, createdAt, updatedAt }) => ({ id, parentId: parentId || null, name, createdAt, updatedAt })),
+      files: liveFiles.map(({ id, folderId, path, name, hash }) => {
         const source = workspace.files.find((file) => file.id === id);
         return { id, folderId, path, name, hash, pinned: Boolean(source?.pinned), createdAt: source?.createdAt, updatedAt: source?.updatedAt };
       }),
+      folderPlaceholders: folderPlaceholders.map(({ folderId, path }) => ({ folderId, path })),
       tombstones: workspace.trash.map((item) => ({
         kind: item.kind,
         id: item.entry?.id,
         deletedAt: item.deletedAt,
+        restoredAt: item.restoredAt || null,
+        restoredEntries: item.restoredEntries || [],
+        entry: item.entry ? {
+          id: item.entry.id,
+          name: item.entry.name,
+          folderId: item.entry.folderId || null,
+          parentId: item.entry.parentId || null,
+          createdAt: item.entry.createdAt,
+          updatedAt: item.entry.updatedAt,
+        } : null,
+        folders: (item.folders || []).map(({ id, parentId, name, createdAt, updatedAt }) => ({ id, parentId: parentId || null, name, createdAt, updatedAt })),
+        files: (item.files || []).map(({ id, folderId, name, pinned, hash, createdAt, updatedAt }) => ({ id, folderId: folderId || null, name, pinned, hash, createdAt, updatedAt })),
       })).filter((item) => item.id),
     };
     files.push({
@@ -247,6 +349,7 @@
     const generatedAt = index.generatedAt || nowIso();
     const folders = (Array.isArray(index.folders) ? index.folders : []).filter((folder) => folder?.id).map((folder) => ({
       id: folder.id,
+      parentId: folder.parentId || null,
       name: folder.name || "Untitled folder",
       createdAt: folder.createdAt || generatedAt,
       updatedAt: folder.updatedAt || generatedAt,
@@ -268,7 +371,11 @@
     const trash = (Array.isArray(index.tombstones) ? index.tombstones : []).filter((item) => item?.id).map((item) => ({
       kind: item.kind === "folder" ? "folder" : "file",
       deletedAt: item.deletedAt || generatedAt,
-      entry: { id: item.id },
+      restoredAt: item.restoredAt || null,
+      restoredEntries: Array.isArray(item.restoredEntries) ? item.restoredEntries : [],
+      entry: { id: item.id, ...(item.entry || {}) },
+      folders: Array.isArray(item.folders) ? item.folders : [],
+      files: Array.isArray(item.files) ? item.files : [],
     }));
     return normalizeWorkspace({
       id: index.workspaceId,
@@ -277,6 +384,7 @@
       files,
       trash,
       sortMode: index.sortMode,
+      folderSortMode: index.folderSortMode,
       activeFileId: index.activeFileId,
       createdAt: index.createdAt || generatedAt,
       updatedAt: generatedAt,
@@ -305,21 +413,38 @@
       if (!id) continue;
       const key = `${item.kind}:${id}`;
       const existing = tombstones.get(key);
-      if (!existing || timestamp(item.deletedAt) >= timestamp(existing.deletedAt)) tombstones.set(key, item);
-    }
-    for (const tombstone of tombstones.values()) {
-      const id = tombstone.entry.id;
-      if (tombstone.kind === "folder") {
-        const folder = folders.get(id);
-        if (!folder || timestamp(tombstone.deletedAt) >= timestamp(folder.updatedAt)) folders.delete(id);
-        for (const [fileId, file] of files) {
-          if (file.folderId === id && timestamp(tombstone.deletedAt) >= timestamp(file.updatedAt)) files.delete(fileId);
-        }
+      if (!existing) {
+        tombstones.set(key, item);
+      } else if (trashEventTimestamp(item) > trashEventTimestamp(existing)) {
+        tombstones.set(key, mergeTrashRecords(item, existing));
       } else {
-        const file = files.get(id);
-        if (!file || timestamp(tombstone.deletedAt) >= timestamp(file.updatedAt)) files.delete(id);
+        tombstones.set(key, mergeTrashRecords(existing, item));
       }
     }
+    for (const tombstone of tombstones.values()) {
+      if (!isTrashItemActive(tombstone)) continue;
+      const id = tombstone.entry.id;
+      if (tombstone.kind === "folder") {
+        const deletedFolderIds = descendantFolderIds([...folders.values()], id);
+        const restoredFolderIds = restoredTrashIds(tombstone, "folder");
+        const restoredFileIds = restoredTrashIds(tombstone, "file");
+        for (const folderId of deletedFolderIds) {
+          if (!restoredFolderIds.has(folderId)) folders.delete(folderId);
+        }
+        for (const [fileId, file] of files) {
+          if (deletedFolderIds.has(file.folderId) && !restoredFileIds.has(fileId)) files.delete(fileId);
+        }
+      } else {
+        files.delete(id);
+      }
+    }
+    const remoteIsNewer = timestamp(remote.updatedAt) > timestamp(local.updatedAt);
+    const preferredFolderIds = (remoteIsNewer ? remote : local).folders.map((folder) => folder.id);
+    const orderedFolderIds = new Set(preferredFolderIds);
+    const mergedFolders = [
+      ...preferredFolderIds.map((id) => folders.get(id)).filter(Boolean),
+      ...[...folders.values()].filter((folder) => !orderedFolderIds.has(folder.id)),
+    ];
     const mergedFiles = [...files.values()];
     const preferredActiveId = files.has(local.activeFileId)
       ? local.activeFileId
@@ -328,13 +453,29 @@
       ...local,
       id: remote.id || local.id,
       name: remote.name || local.name,
-      folders: [...folders.values()],
+      folders: mergedFolders,
       files: mergedFiles,
       trash: [...tombstones.values()],
       activeFileId: preferredActiveId,
-      sortMode: timestamp(remote.updatedAt) > timestamp(local.updatedAt) ? remote.sortMode : local.sortMode,
+      sortMode: remoteIsNewer ? remote.sortMode : local.sortMode,
+      folderSortMode: remoteIsNewer ? remote.folderSortMode : local.folderSortMode,
       updatedAt: new Date(Math.max(timestamp(local.updatedAt), timestamp(remote.updatedAt)) || Date.now()).toISOString(),
     });
+  }
+
+  function descendantFolderIds(folders, rootId) {
+    const result = new Set([rootId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const folder of folders) {
+        if (folder.parentId && result.has(folder.parentId) && !result.has(folder.id)) {
+          result.add(folder.id);
+          changed = true;
+        }
+      }
+    }
+    return result;
   }
 
   function removeEntry(workspaceInput, kind, id) {
@@ -342,8 +483,9 @@
     if (kind === "file") {
       workspace.files = workspace.files.filter((file) => file.id !== id);
     } else if (kind === "folder") {
-      workspace.folders = workspace.folders.filter((folder) => folder.id !== id);
-      workspace.files = workspace.files.filter((file) => file.folderId !== id);
+      const folderIds = descendantFolderIds(workspace.folders, id);
+      workspace.folders = workspace.folders.filter((folder) => !folderIds.has(folder.id));
+      workspace.files = workspace.files.filter((file) => !folderIds.has(file.folderId));
     } else {
       throw new Error("Unknown entry type.");
     }
@@ -364,10 +506,12 @@
     } else if (kind === "folder") {
       const entry = workspace.folders.find((folder) => folder.id === id);
       if (!entry) return workspace;
-      const files = workspace.files.filter((file) => file.folderId === id);
-      workspace.trash.push({ kind, deletedAt, entry, files });
-      workspace.folders = workspace.folders.filter((folder) => folder.id !== id);
-      workspace.files = workspace.files.filter((file) => file.folderId !== id);
+      const folderIds = descendantFolderIds(workspace.folders, id);
+      const folders = workspace.folders.filter((folder) => folderIds.has(folder.id));
+      const files = workspace.files.filter((file) => folderIds.has(file.folderId));
+      workspace.trash.push({ kind, deletedAt, entry, folders, files });
+      workspace.folders = workspace.folders.filter((folder) => !folderIds.has(folder.id));
+      workspace.files = workspace.files.filter((file) => !folderIds.has(file.folderId));
     } else {
       throw new Error("Unknown entry type.");
     }
@@ -378,12 +522,212 @@
     return workspace;
   }
 
+  function trashEventTimestamp(item) {
+    return Math.max(
+      timestamp(item?.deletedAt),
+      timestamp(item?.restoredAt),
+      ...(item?.restoredEntries || []).map((entry) => timestamp(entry.restoredAt)),
+    );
+  }
+
+  function restoredTrashIds(item, kind) {
+    return new Set((item?.restoredEntries || [])
+      .filter((entry) => entry.kind === kind && timestamp(entry.restoredAt) > timestamp(item.deletedAt))
+      .map((entry) => entry.id));
+  }
+
+  function mergeTrashRecords(primary, secondary) {
+    const entryScore = (entry) => (entry?.name ? 1 : 0) + (entry?.scene ? 2 : 0);
+    const richerEntry = entryScore(primary.entry) >= entryScore(secondary.entry)
+      ? primary.entry
+      : secondary.entry;
+    const richerArray = (left, right) => (left?.length || 0) >= (right?.length || 0) ? (left || []) : (right || []);
+    const shouldMergeRestores = timestamp(primary.deletedAt) === timestamp(secondary.deletedAt);
+    const restoredEntries = new Map();
+    for (const entry of [
+      ...(shouldMergeRestores ? secondary.restoredEntries || [] : []),
+      ...(primary.restoredEntries || []),
+    ]) {
+      const key = `${entry.kind}:${entry.id}`;
+      const existing = restoredEntries.get(key);
+      if (!existing || timestamp(entry.restoredAt) >= timestamp(existing.restoredAt)) {
+        restoredEntries.set(key, {
+          ...existing,
+          ...entry,
+          structural: existing ? Boolean(existing.structural && entry.structural) : Boolean(entry.structural),
+        });
+      }
+    }
+    return {
+      ...secondary,
+      ...primary,
+      entry: richerEntry,
+      folders: richerArray(primary.folders, secondary.folders),
+      files: richerArray(primary.files, secondary.files),
+      restoredEntries: [...restoredEntries.values()],
+    };
+  }
+
+  function isTrashItemActive(item) {
+    return Boolean(item?.entry?.id) && timestamp(item.deletedAt) > timestamp(item.restoredAt);
+  }
+
+  function activeTrashItems(workspaceInput) {
+    return normalizeWorkspace(workspaceInput).trash
+      .filter(isTrashItemActive)
+      .sort((left, right) => timestamp(right.deletedAt) - timestamp(left.deletedAt));
+  }
+
+  function trashChildRestoration(item, kind, id) {
+    return (item?.restoredEntries || []).find((entry) =>
+      entry.kind === kind
+      && entry.id === id
+      && timestamp(entry.restoredAt) > timestamp(item.deletedAt),
+    ) || null;
+  }
+
+  function markTrashChildRestored(item, kind, id, restoredAt, structural = false) {
+    item.restoredEntries ||= [];
+    const existing = item.restoredEntries.find((entry) => entry.kind === kind && entry.id === id);
+    if (existing) {
+      if (timestamp(restoredAt) >= timestamp(existing.restoredAt)) existing.restoredAt = restoredAt;
+      if (!structural) existing.structural = false;
+    } else {
+      item.restoredEntries.push({ kind, id, restoredAt, structural });
+    }
+  }
+
+  function activeFolderTrash(workspace, trashFolderId) {
+    return workspace.trash
+      .filter((item) => item.kind === "folder" && item.entry?.id === trashFolderId && isTrashItemActive(item))
+      .sort((left, right) => timestamp(right.deletedAt) - timestamp(left.deletedAt))[0];
+  }
+
+  function restoreFolderPath(workspace, item, folderIds, explicitFolderIds, restoredAt) {
+    const sourceFolders = new Map((item.folders || []).map((folder) => [folder.id, folder]));
+    const availableIds = new Set([...workspace.folders.map((folder) => folder.id), ...folderIds]);
+    workspace.folders = workspace.folders.filter((folder) => !folderIds.has(folder.id));
+    for (const source of item.folders || []) {
+      if (!folderIds.has(source.id)) continue;
+      workspace.folders.push({
+        ...source,
+        parentId: availableIds.has(source.parentId) ? source.parentId : null,
+        updatedAt: restoredAt,
+      });
+      markTrashChildRestored(item, "folder", source.id, restoredAt, !explicitFolderIds.has(source.id));
+    }
+    return sourceFolders;
+  }
+
+  function folderPathIds(folders, folderId) {
+    const byId = new Map(folders.map((folder) => [folder.id, folder]));
+    const ids = new Set();
+    let current = byId.get(folderId);
+    while (current && !ids.has(current.id)) {
+      ids.add(current.id);
+      current = byId.get(current.parentId);
+    }
+    return ids;
+  }
+
+  function restoreTrashedFile(workspaceInput, trashFolderId, fileId, restoredAt = nowIso()) {
+    const workspace = normalizeWorkspace(workspaceInput);
+    const item = activeFolderTrash(workspace, trashFolderId);
+    const file = item?.files?.find((candidate) => candidate.id === fileId);
+    if (!item || !file?.scene) throw new Error("This file backup is not available on this device.");
+    const ancestorIds = folderPathIds(item.folders || [], file.folderId);
+    restoreFolderPath(workspace, item, ancestorIds, new Set(), restoredAt);
+    workspace.files = workspace.files.filter((candidate) => candidate.id !== file.id);
+    workspace.files.push({ ...file, updatedAt: restoredAt });
+    markTrashChildRestored(item, "file", file.id, restoredAt, false);
+    workspace.activeFileId ||= file.id;
+    workspace.updatedAt = restoredAt;
+    return normalizeWorkspace(workspace);
+  }
+
+  function restoreTrashedFolder(workspaceInput, trashFolderId, folderId, restoredAt = nowIso()) {
+    if (trashFolderId === folderId) return restoreTrashEntry(workspaceInput, "folder", trashFolderId, restoredAt);
+    const workspace = normalizeWorkspace(workspaceInput);
+    const item = activeFolderTrash(workspace, trashFolderId);
+    if (!item?.folders?.some((folder) => folder.id === folderId)) {
+      throw new Error("This folder backup is not available on this device.");
+    }
+    const subtreeIds = descendantFolderIds(item.folders, folderId);
+    const ancestorIds = folderPathIds(item.folders, folderId);
+    const folderIds = new Set([...subtreeIds, ...ancestorIds]);
+    restoreFolderPath(workspace, item, folderIds, subtreeIds, restoredAt);
+    const recoveredFiles = (item.files || []).filter((file) => subtreeIds.has(file.folderId) && file.scene);
+    const recoveredFileIds = new Set(recoveredFiles.map((file) => file.id));
+    workspace.files = workspace.files.filter((file) => !recoveredFileIds.has(file.id));
+    for (const file of recoveredFiles) {
+      workspace.files.push({ ...file, updatedAt: restoredAt });
+      markTrashChildRestored(item, "file", file.id, restoredAt, false);
+    }
+    workspace.activeFileId ||= workspace.files[0]?.id || null;
+    workspace.updatedAt = restoredAt;
+    return normalizeWorkspace(workspace);
+  }
+
+  function restoreTrashEntry(workspaceInput, kind, id, restoredAt = nowIso()) {
+    const workspace = normalizeWorkspace(workspaceInput);
+    const item = workspace.trash
+      .filter((candidate) => candidate.kind === kind && candidate.entry?.id === id && isTrashItemActive(candidate))
+      .sort((left, right) => timestamp(right.deletedAt) - timestamp(left.deletedAt))[0];
+    if (!item) return workspace;
+
+    if (kind === "file") {
+      if (!item.entry?.scene) throw new Error("This file backup is not available on this device.");
+      let folderId = item.entry.folderId;
+      if (!workspace.folders.some((folder) => folder.id === folderId)) {
+        let destination = workspace.folders[0];
+        if (!destination) {
+          destination = {
+            id: makeId("folder"),
+            parentId: null,
+            name: DEFAULT_FOLDER_NAME,
+            createdAt: restoredAt,
+            updatedAt: restoredAt,
+          };
+          workspace.folders.push(destination);
+        }
+        folderId = destination.id;
+      }
+      workspace.files = workspace.files.filter((file) => file.id !== id);
+      workspace.files.push({ ...item.entry, folderId, updatedAt: restoredAt });
+    } else if (kind === "folder") {
+      const recoveredFolders = item.folders?.length ? item.folders : item.entry?.name ? [item.entry] : [];
+      if (!recoveredFolders.length) throw new Error("This folder backup is not available on this device.");
+      const recoveredFolderIds = new Set(recoveredFolders.map((folder) => folder.id));
+      const availableFolderIds = new Set([
+        ...workspace.folders.map((folder) => folder.id),
+        ...recoveredFolderIds,
+      ]);
+      workspace.folders = workspace.folders.filter((folder) => !recoveredFolderIds.has(folder.id));
+      workspace.folders.push(...recoveredFolders.map((folder) => ({
+        ...folder,
+        parentId: availableFolderIds.has(folder.parentId) ? folder.parentId : null,
+        updatedAt: restoredAt,
+      })));
+      const recoveredFiles = (item.files || []).filter((file) => file?.id && file.scene);
+      const recoveredFileIds = new Set(recoveredFiles.map((file) => file.id));
+      workspace.files = workspace.files.filter((file) => !recoveredFileIds.has(file.id));
+      workspace.files.push(...recoveredFiles.map((file) => ({ ...file, updatedAt: restoredAt })));
+    } else {
+      throw new Error("Unknown entry type.");
+    }
+
+    item.restoredAt = restoredAt;
+    workspace.activeFileId ||= workspace.files[0]?.id || null;
+    workspace.updatedAt = restoredAt;
+    return normalizeWorkspace(workspace);
+  }
+
   function purgeExpiredTrash(workspaceInput, now = new Date()) {
     const workspace = normalizeWorkspace(workspaceInput);
     const nowTime = now instanceof Date ? now.getTime() : new Date(now).getTime();
     workspace.trash = workspace.trash.filter((item) => {
-      const deletedTime = new Date(item.deletedAt).getTime();
-      return Number.isFinite(deletedTime) && nowTime - deletedTime <= TRASH_RETENTION_MS;
+      const eventTime = trashEventTimestamp(item);
+      return eventTime > 0 && nowTime - eventTime <= TRASH_RETENTION_MS;
     });
     return workspace;
   }
@@ -396,6 +740,44 @@
       result.sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
     }
     return result;
+  }
+
+  function sortedFolders(folders, mode = "manual") {
+    const result = [...folders];
+    if (mode === "alphabetical") {
+      result.sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: "base" }));
+    } else if (mode === "updated") {
+      result.sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
+    }
+    return result;
+  }
+
+  function moveFolder(workspaceInput, folderId, targetFolderId, placement = "before") {
+    const workspace = normalizeWorkspace(workspaceInput);
+    const sourceIndex = workspace.folders.findIndex((folder) => folder.id === folderId);
+    if (sourceIndex < 0 || folderId === targetFolderId) return workspace;
+    const [folder] = workspace.folders.splice(sourceIndex, 1);
+    const targetIndex = workspace.folders.findIndex((candidate) => candidate.id === targetFolderId);
+    if (targetIndex < 0) {
+      workspace.folders.push(folder);
+    } else {
+      workspace.folders.splice(targetIndex + (placement === "after" ? 1 : 0), 0, folder);
+    }
+    workspace.folderSortMode = "manual";
+    workspace.updatedAt = nowIso();
+    return workspace;
+  }
+
+  function moveFolderToParent(workspaceInput, folderId, parentId = null) {
+    const workspace = normalizeWorkspace(workspaceInput);
+    const folder = workspace.folders.find((candidate) => candidate.id === folderId);
+    if (!folder || folder.parentId === parentId || parentId === folderId) return workspace;
+    if (parentId && descendantFolderIds(workspace.folders, folderId).has(parentId)) return workspace;
+    if (parentId && !workspace.folders.some((candidate) => candidate.id === parentId)) return workspace;
+    folder.parentId = parentId || null;
+    folder.updatedAt = nowIso();
+    workspace.updatedAt = folder.updatedAt;
+    return workspace;
   }
 
   function moveFile(workspaceInput, fileId, targetFolderId, beforeFileId = null) {
@@ -420,6 +802,29 @@
     return horizontal >= 64 && vertical <= 36;
   }
 
+  async function retryConflict(operation, { attempts = 3, delayMs = 0, jitterMs = 0 } = {}) {
+    let lastError;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await operation(attempt);
+      } catch (error) {
+        lastError = error;
+        if (error?.status !== 409 || attempt === attempts - 1) throw error;
+        if (delayMs > 0 || jitterMs > 0) {
+          const retryDelay = delayMs * (attempt + 1) + Math.random() * jitterMs;
+          await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  function hasActiveProviderError(provider = {}) {
+    if (!provider.lastError) return false;
+    if (!provider.lastErrorAt) return !provider.lastSyncAt;
+    return timestamp(provider.lastErrorAt) > timestamp(provider.lastSyncAt);
+  }
+
   const api = {
     WORKSPACE_VERSION,
     TRASH_RETENTION_MS,
@@ -433,6 +838,8 @@
     slugify,
     stableStringify,
     hashString,
+    gitBlobSha,
+    providerChangePlan,
     hashScene,
     buildProviderFiles,
     buildLocalVault,
@@ -441,10 +848,20 @@
     mergeWorkspaces,
     removeEntry,
     trashEntry,
+    activeTrashItems,
+    restoreTrashEntry,
+    restoreTrashedFile,
+    restoreTrashedFolder,
+    trashChildRestoration,
     purgeExpiredTrash,
     sortedFiles,
+    sortedFolders,
     moveFile,
+    moveFolder,
+    moveFolderToParent,
     isDeleteSwipe,
+    retryConflict,
+    hasActiveProviderError,
   };
 
   globalScope.ExcalidrawSyncCore = api;

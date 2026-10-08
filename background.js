@@ -7,10 +7,12 @@ const extensionApi = globalThis.browser || globalThis.chrome;
 const usesPromiseApi = typeof globalThis.browser !== "undefined";
 const PROVIDERS_KEY = "excalidrawSync.providers";
 const PROVIDER_SESSION_KEY = "excalidrawSync.providerSession";
+const PROVIDER_CREDENTIALS_KEY = "excalidrawSync.providerCredentials";
 const SIDEBAR_OPEN_REQUEST_KEY = "excalidrawSync.sidebarOpenRequested";
 const LAUNCHER_INTRODUCED_KEY = "excalidrawSync.launcherIntroduced";
 const NATIVE_HOST_NAME = "com.thiagoheron.excalidraw_sync";
 let volatileProviderSession = null;
+let syncInFlight = Promise.resolve();
 
 function apiCall(target, method, ...args) {
   if (usesPromiseApi) {
@@ -59,6 +61,7 @@ async function nativeMessage(message) {
 
 function defaultProviderState() {
   return {
+    syncAuthority: "local",
     github: {
       config: {
         clientId: "",
@@ -71,6 +74,7 @@ function defaultProviderState() {
       pendingAuth: null,
       lastSyncAt: null,
       lastError: null,
+      lastErrorAt: null,
       repositoryUrl: null,
     },
     googleDrive: {
@@ -84,27 +88,42 @@ function defaultProviderState() {
       folderId: null,
       lastSyncAt: null,
       lastError: null,
+      lastErrorAt: null,
       folderUrl: null,
     },
   };
 }
 
 async function readProviders() {
-  const [stored, sessionStored] = await Promise.all([
+  const [stored, sessionStored, credentials] = await Promise.all([
     storageGet(PROVIDERS_KEY),
     sessionGet(PROVIDER_SESSION_KEY),
+    storageGet(PROVIDER_CREDENTIALS_KEY),
   ]);
   const defaults = defaultProviderState();
   if (!stored) {
-    return ExcalidrawSyncSecurity.mergeProviderStorage(defaults, {}, sessionStored || {});
+    return ExcalidrawSyncSecurity.mergeProviderStorage(defaults, {}, sessionStored || {}, credentials || {});
   }
-  const legacySession = ExcalidrawSyncSecurity.providerSessionState(stored);
+  const hasLegacyCredentials = ExcalidrawSyncSecurity.hasSensitiveProviderData(stored);
+  const hasLegacySessionCredentials = Boolean(
+    sessionStored?.github?.auth || sessionStored?.googleDrive?.auth,
+  );
+  const legacySession = hasLegacyCredentials
+    ? ExcalidrawSyncSecurity.providerSessionState(stored)
+    : {};
+  const legacyCredentials = hasLegacyCredentials
+    ? ExcalidrawSyncSecurity.providerCredentialState(stored)
+    : {};
+  const legacySessionCredentials = hasLegacySessionCredentials
+    ? ExcalidrawSyncSecurity.providerCredentialState(sessionStored)
+    : null;
   const providers = ExcalidrawSyncSecurity.mergeProviderStorage(
     defaults,
     stored,
     sessionStored || legacySession,
+    credentials || legacySessionCredentials || legacyCredentials,
   );
-  if (ExcalidrawSyncSecurity.hasSensitiveProviderData(stored)) {
+  if (hasLegacyCredentials || (!credentials && hasLegacySessionCredentials)) {
     await writeProviders(providers);
   }
   return providers;
@@ -113,12 +132,14 @@ async function readProviders() {
 async function writeProviders(providers) {
   await Promise.all([
     storageSet(PROVIDERS_KEY, ExcalidrawSyncSecurity.providerPersistentState(providers)),
+    storageSet(PROVIDER_CREDENTIALS_KEY, ExcalidrawSyncSecurity.providerCredentialState(providers)),
     sessionSet(PROVIDER_SESSION_KEY, ExcalidrawSyncSecurity.providerSessionState(providers)),
   ]);
 }
 
 function publicProviderState(providers) {
   return {
+    syncAuthority: providers.syncAuthority || "local",
     github: {
       config: providers.github.config,
       connected: Boolean(providers.github.auth?.accessToken),
@@ -133,6 +154,7 @@ function publicProviderState(providers) {
         : null,
       lastSyncAt: providers.github.lastSyncAt,
       lastError: providers.github.lastError,
+      lastErrorAt: providers.github.lastErrorAt,
       repositoryUrl: providers.github.repositoryUrl,
     },
     googleDrive: {
@@ -141,6 +163,7 @@ function publicProviderState(providers) {
       account: providers.googleDrive.account,
       lastSyncAt: providers.googleDrive.lastSyncAt,
       lastError: providers.googleDrive.lastError,
+      lastErrorAt: providers.googleDrive.lastErrorAt,
       folderUrl: providers.googleDrive.folderUrl,
     },
   };
@@ -208,6 +231,35 @@ async function githubRequest(path, token, options = {}) {
   });
 }
 
+async function githubToken(providers) {
+  const auth = providers.github.auth;
+  if (!auth?.accessToken) throw new Error("Connect GitHub first.");
+  if (!auth.expiresAt || auth.expiresAt > Date.now() + 60_000) return auth.accessToken;
+  if (!auth.refreshToken) throw new Error("GitHub access expired. Connect again.");
+  const body = await fetchJson("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: providers.github.config.clientId,
+      grant_type: "refresh_token",
+      refresh_token: auth.refreshToken,
+    }),
+  });
+  if (body?.error || !body?.access_token) {
+    throw new Error(body?.error_description || body?.error || "GitHub could not refresh the connection.");
+  }
+  providers.github.auth = {
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token || auth.refreshToken,
+    expiresAt: body.expires_in ? Date.now() + body.expires_in * 1000 : null,
+    refreshTokenExpiresAt: body.refresh_token_expires_in
+      ? Date.now() + body.refresh_token_expires_in * 1000
+      : auth.refreshTokenExpiresAt || null,
+  };
+  await writeProviders(providers);
+  return providers.github.auth.accessToken;
+}
+
 async function githubStartAuth() {
   const providers = await readProviders();
   const clientId = providers.github.config.clientId.trim();
@@ -230,6 +282,7 @@ async function githubStartAuth() {
     interval: Math.max(5, body.interval || 5),
   };
   providers.github.lastError = null;
+  providers.github.lastErrorAt = null;
   await writeProviders(providers);
   return publicProviderState(providers).github;
 }
@@ -266,10 +319,19 @@ async function githubPollAuth() {
     throw new Error(body.error_description || body.error || "GitHub sign-in failed.");
   }
   const account = await githubRequest("/user", body.access_token);
-  providers.github.auth = { accessToken: body.access_token };
+  providers.github.auth = {
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token || null,
+    expiresAt: body.expires_in ? Date.now() + body.expires_in * 1000 : null,
+    refreshTokenExpiresAt: body.refresh_token_expires_in
+      ? Date.now() + body.refresh_token_expires_in * 1000
+      : null,
+  };
   providers.github.account = { login: account.login, avatarUrl: account.avatar_url };
   providers.github.pendingAuth = null;
   providers.github.lastError = null;
+  providers.github.lastErrorAt = null;
+  providers.syncAuthority = "github";
   await writeProviders(providers);
   return { pending: false, provider: publicProviderState(providers).github };
 }
@@ -278,11 +340,17 @@ function encodeGitHubPath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
-async function getGitHubContent(owner, repo, path, token, branch) {
+async function getGitHubContent(owner, repo, path, token, branch, { fresh = false } = {}) {
+  const freshness = fresh
+    ? `&excalidraw_sync_fresh=${Date.now()}-${Math.random().toString(36).slice(2)}`
+    : "";
   try {
     return await githubRequest(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(path)}?ref=${encodeURIComponent(branch)}`,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(path)}?ref=${encodeURIComponent(branch)}${freshness}`,
       token,
+      fresh
+        ? { cache: "no-store", headers: { "Cache-Control": "no-cache" } }
+        : {},
     );
   } catch (error) {
     if (error.status === 404) {
@@ -292,8 +360,41 @@ async function getGitHubContent(owner, repo, path, token, branch) {
   }
 }
 
+async function putGitHubContentWithRetry(owner, repo, branch, token, file, message) {
+  const desiredSha = await ExcalidrawSyncCore.gitBlobSha(file.content);
+  return ExcalidrawSyncCore.retryConflict(async () => {
+    const current = await getGitHubContent(owner, repo, file.path, token, branch, { fresh: true });
+    if (current?.sha === desiredSha) return { unchanged: true };
+    return githubRequest(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(file.path)}`,
+      token,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          message,
+          content: utf8ToBase64(file.content),
+          branch,
+          ...(current?.sha ? { sha: current.sha } : {}),
+        }),
+      },
+    );
+  }, { attempts: 8, delayMs: 200, jitterMs: 400 });
+}
+
+async function deleteGitHubContentWithRetry(owner, repo, branch, token, path) {
+  return ExcalidrawSyncCore.retryConflict(async () => {
+    const current = await getGitHubContent(owner, repo, path, token, branch, { fresh: true });
+    if (!current?.sha) return { unchanged: true };
+    return githubRequest(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(path)}`,
+      token,
+      { method: "DELETE", body: JSON.stringify({ message: `Remove ${path}`, sha: current.sha, branch }) },
+    );
+  }, { attempts: 8, delayMs: 200, jitterMs: 400 });
+}
+
 async function ensureGitHubRepository(providers) {
-  const { accessToken } = providers.github.auth;
+  const accessToken = await githubToken(providers);
   const account = providers.github.account || (await githubRequest("/user", accessToken));
   const owner = account.login;
   const name = providers.github.config.repoName.trim();
@@ -349,16 +450,6 @@ async function githubTree(owner, repo, branch, token) {
   }
 }
 
-async function gitBlobSha(content) {
-  const contentBytes = new TextEncoder().encode(content);
-  const header = new TextEncoder().encode(`blob ${contentBytes.byteLength}\0`);
-  const joined = new Uint8Array(header.byteLength + contentBytes.byteLength);
-  joined.set(header);
-  joined.set(contentBytes, header.byteLength);
-  const digest = await crypto.subtle.digest("SHA-1", joined);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function readGitHubWorkspace(repository, rootDirectory, token) {
   const owner = repository.owner.login;
   const repo = repository.name;
@@ -366,12 +457,12 @@ async function readGitHubWorkspace(repository, rootDirectory, token) {
   const placeholder = ExcalidrawSyncCore.createWorkspace();
   const indexPath = ExcalidrawSyncCore.buildProviderFiles(placeholder, rootDirectory)
     .find((file) => file.id === "workspace-index").path;
-  const response = await getGitHubContent(owner, repo, indexPath, token, branch);
+  const response = await getGitHubContent(owner, repo, indexPath, token, branch, { fresh: true });
   if (!response?.content) return null;
   const index = JSON.parse(base64ToUtf8(response.content));
   const scenes = {};
   await Promise.all((index.files || []).map(async (file) => {
-    const remote = await getGitHubContent(owner, repo, file.path, token, branch);
+    const remote = await getGitHubContent(owner, repo, file.path, token, branch, { fresh: true });
     if (remote?.content) scenes[file.path] = JSON.parse(base64ToUtf8(remote.content));
   }));
   return ExcalidrawSyncCore.workspaceFromProviderIndex(index, scenes);
@@ -381,7 +472,7 @@ async function githubSync(workspaceInput, providers) {
   if (!providers.github.auth?.accessToken) {
     return { skipped: true };
   }
-  const token = providers.github.auth.accessToken;
+  const token = await githubToken(providers);
   const repository = await ensureGitHubRepository(providers);
   const owner = repository.owner.login;
   const repo = repository.name;
@@ -397,75 +488,52 @@ async function githubSync(workspaceInput, providers) {
   const desiredFiles = ExcalidrawSyncCore.buildProviderFiles(
     workspace,
     providers.github.config.rootDirectory,
+    { includeFolderPlaceholders: true },
   );
   const indexFile = desiredFiles.find((file) => file.id === "workspace-index");
-  const previousIndexResponse = await getGitHubContent(owner, repo, indexFile.path, token, branch);
+  const previousIndexResponse = await getGitHubContent(owner, repo, indexFile.path, token, branch, { fresh: true });
   let previousPaths = [];
   if (previousIndexResponse?.content) {
     try {
       const previousIndex = JSON.parse(base64ToUtf8(previousIndexResponse.content));
-      previousPaths = (previousIndex.files || []).map((file) => file.path);
+      previousPaths = [
+        ...(previousIndex.files || []).map((file) => file.path),
+        ...(previousIndex.folderPlaceholders || []).map((folder) => folder.path),
+      ];
     } catch (_error) {
       previousPaths = [];
     }
   }
   const tree = await githubTree(owner, repo, branch, token);
-  const desiredPaths = new Set(desiredFiles.map((file) => file.path));
+  const { changedFiles, removedPaths } = await ExcalidrawSyncCore.providerChangePlan(
+    desiredFiles,
+    tree,
+    previousPaths,
+  );
   const changed = [];
-  for (const file of desiredFiles.filter((item) => item.id !== "workspace-index")) {
-    const blobSha = await gitBlobSha(file.content);
-    if (tree.get(file.path) !== blobSha) {
-      const payload = {
-        message: `Sync ${file.name}`,
-        content: utf8ToBase64(file.content),
-        branch,
-      };
-      if (tree.has(file.path)) {
-        payload.sha = tree.get(file.path);
-      }
-      await githubRequest(
-        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(file.path)}`,
-        token,
-        { method: "PUT", body: JSON.stringify(payload) },
-      );
-      changed.push(file.path);
-    }
+  if (!changedFiles.length && !removedPaths.length) {
+    providers.github.repositoryUrl = repository.html_url;
+    providers.github.lastSyncAt = new Date().toISOString();
+    providers.github.lastError = null;
+    providers.github.lastErrorAt = null;
+    return { skipped: false, changed, url: repository.html_url, workspace };
   }
-  for (const path of previousPaths.filter((path) => !desiredPaths.has(path))) {
-    const sha = tree.get(path);
-    if (sha) {
-      await githubRequest(
-        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(path)}`,
-        token,
-        {
-          method: "DELETE",
-          body: JSON.stringify({ message: `Remove ${path}`, sha, branch }),
-        },
-      );
-      changed.push(path);
-    }
+  for (const file of changedFiles.filter((item) => item.id !== "workspace-index")) {
+    await putGitHubContentWithRetry(owner, repo, branch, token, file, `Sync ${file.name}`);
+    changed.push(file.path);
   }
-  const refreshedIndex = await getGitHubContent(owner, repo, indexFile.path, token, branch);
-  const indexBlobSha = await gitBlobSha(indexFile.content);
-  if (refreshedIndex?.sha !== indexBlobSha) {
-    await githubRequest(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(indexFile.path)}`,
-      token,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          message: "Update Excalidraw Sync index",
-          content: utf8ToBase64(indexFile.content),
-          branch,
-          ...(refreshedIndex?.sha ? { sha: refreshedIndex.sha } : {}),
-        }),
-      },
-    );
+  for (const path of removedPaths) {
+    await deleteGitHubContentWithRetry(owner, repo, branch, token, path);
+    changed.push(path);
+  }
+  if (changedFiles.some((file) => file.id === "workspace-index")) {
+    await putGitHubContentWithRetry(owner, repo, branch, token, indexFile, "Update Excalidraw Sync index");
     changed.push(indexFile.path);
   }
   providers.github.repositoryUrl = repository.html_url;
   providers.github.lastSyncAt = new Date().toISOString();
   providers.github.lastError = null;
+  providers.github.lastErrorAt = null;
   return { skipped: false, changed, url: repository.html_url, workspace };
 }
 
@@ -560,6 +628,8 @@ async function googleConnect() {
   };
   providers.googleDrive.account = { email: account.email, picture: account.picture };
   providers.googleDrive.lastError = null;
+  providers.googleDrive.lastErrorAt = null;
+  providers.syncAuthority = "googleDrive";
   await writeProviders(providers);
   return publicProviderState(providers).googleDrive;
 }
@@ -621,6 +691,15 @@ async function readDriveWorkspace(root, items, token) {
   const remoteFiles = items.filter((item) =>
     !item.trashed && item.appProperties?.excalidrawSyncKind === "file" && item.appProperties?.excalidrawSyncId,
   );
+  const remoteFolders = items.filter((item) =>
+    !item.trashed && item.appProperties?.excalidrawSyncKind === "folder" && item.appProperties?.excalidrawSyncId,
+  );
+  const liveItemsBySyncKey = new Map(
+    [...remoteFiles, ...remoteFolders].map((item) => [
+      `${item.appProperties.excalidrawSyncKind}:${item.appProperties.excalidrawSyncId}`,
+      item,
+    ]),
+  );
   await Promise.all(remoteFiles.map(async (file) => {
     scenes[file.id] = await driveRequest(`/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`, token);
   }));
@@ -629,9 +708,10 @@ async function readDriveWorkspace(root, items, token) {
     workspaceId: root.appProperties?.excalidrawSyncWorkspace,
     workspaceName: root.name,
     generatedAt,
-    folders: items.filter((item) => !item.trashed && item.appProperties?.excalidrawSyncKind === "folder").map((item) => ({
-      id: item.appProperties.excalidrawSyncId,
-      name: item.name,
+        folders: remoteFolders.map((item) => ({
+          id: item.appProperties.excalidrawSyncId,
+          parentId: item.appProperties.excalidrawSyncParentId || null,
+          name: item.name,
       createdAt: item.modifiedTime,
       updatedAt: item.modifiedTime,
     })),
@@ -643,11 +723,15 @@ async function readDriveWorkspace(root, items, token) {
       createdAt: item.modifiedTime,
       updatedAt: item.modifiedTime,
     })),
-    tombstones: items.filter((item) => item.trashed && ["file", "folder"].includes(item.appProperties?.excalidrawSyncKind)).map((item) => ({
-      kind: item.appProperties.excalidrawSyncKind,
-      id: item.appProperties.excalidrawSyncId,
-      deletedAt: item.modifiedTime,
-    })),
+    tombstones: items.filter((item) => item.trashed && ["file", "folder"].includes(item.appProperties?.excalidrawSyncKind)).map((item) => {
+      const kind = item.appProperties.excalidrawSyncKind;
+      const id = item.appProperties.excalidrawSyncId;
+      const replacement = liveItemsBySyncKey.get(`${kind}:${id}`);
+      const restoredAt = replacement && new Date(replacement.modifiedTime) > new Date(item.modifiedTime)
+        ? replacement.modifiedTime
+        : null;
+      return { kind, id, deletedAt: item.modifiedTime, restoredAt };
+    }),
   }, scenes);
 }
 
@@ -749,32 +833,46 @@ async function googleDriveSync(workspaceInput, providers) {
       .filter((item) => !item.trashed && item.appProperties?.excalidrawSyncKind === "folder")
       .map((item) => [item.appProperties.excalidrawSyncId, item]),
   );
-  const liveFolderIds = new Set();
-  for (const folder of workspace.folders) {
-    liveFolderIds.add(folder.id);
-    const metadata = {
-      name: folder.name,
-      mimeType: "application/vnd.google-apps.folder",
-      appProperties: {
-        excalidrawSyncWorkspace: workspace.id,
-        excalidrawSyncKind: "folder",
-        excalidrawSyncId: folder.id,
-      },
-    };
-    let remote = foldersBySyncId.get(folder.id);
-    if (!remote) {
-      remote = await createDriveMetadata({ ...metadata, parents: [root.id] }, token);
-      foldersBySyncId.set(folder.id, remote);
-    } else if (remote.name !== folder.name || remote.parents?.[0] !== root.id) {
-      remote = await patchDriveMetadata(
-        remote.id,
-        { name: folder.name },
-        token,
-        remote.parents?.[0] !== root.id ? { add: root.id, remove: remote.parents?.join(",") } : null,
-      );
-      foldersBySyncId.set(folder.id, remote);
-    }
-  }
+      const liveFolderIds = new Set();
+      const folderPromises = new Map();
+      const ensureDriveFolder = async (folder) => {
+        if (folderPromises.has(folder.id)) return folderPromises.get(folder.id);
+        const operation = (async () => {
+          const parentFolder = folder.parentId
+            ? workspace.folders.find((candidate) => candidate.id === folder.parentId)
+            : null;
+          const parentRemote = parentFolder ? await ensureDriveFolder(parentFolder) : root;
+          const desiredParentId = parentRemote?.id || root.id;
+          const metadata = {
+            name: folder.name,
+            mimeType: "application/vnd.google-apps.folder",
+            appProperties: {
+              excalidrawSyncWorkspace: workspace.id,
+              excalidrawSyncKind: "folder",
+              excalidrawSyncId: folder.id,
+              excalidrawSyncParentId: folder.parentId || "",
+            },
+          };
+          let remote = foldersBySyncId.get(folder.id);
+          if (!remote) {
+            remote = await createDriveMetadata({ ...metadata, parents: [desiredParentId] }, token);
+          } else if (remote.name !== folder.name || remote.parents?.[0] !== desiredParentId || remote.appProperties?.excalidrawSyncParentId !== (folder.parentId || "")) {
+            remote = await patchDriveMetadata(
+              remote.id,
+              metadata,
+              remote.parents?.[0] !== desiredParentId ? { add: desiredParentId, remove: remote.parents?.join(",") } : null,
+            );
+          }
+          foldersBySyncId.set(folder.id, remote);
+          return remote;
+        })();
+        folderPromises.set(folder.id, operation);
+        return operation;
+      };
+      for (const folder of workspace.folders) {
+        liveFolderIds.add(folder.id);
+        await ensureDriveFolder(folder);
+      }
 
   const remoteFilesBySyncId = new Map(
     items
@@ -844,34 +942,50 @@ async function googleDriveSync(workspaceInput, providers) {
   providers.googleDrive.folderUrl = `https://drive.google.com/drive/folders/${root.id}`;
   providers.googleDrive.lastSyncAt = new Date().toISOString();
   providers.googleDrive.lastError = null;
+  providers.googleDrive.lastErrorAt = null;
   return { skipped: false, changed, url: providers.googleDrive.folderUrl, workspace };
+}
+
+function selectedSyncProvider(providers) {
+  return ["github", "googleDrive"].includes(providers.syncAuthority)
+    ? providers.syncAuthority
+    : "local";
 }
 
 async function syncAll(workspaceInput) {
   let workspace = ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
   const providers = await readProviders();
-  const result = {};
-  if (providers.github.auth?.accessToken) {
+  const authority = selectedSyncProvider(providers);
+  const result = { github: { skipped: true }, googleDrive: { skipped: true } };
+  if (authority === "github" && providers.github.auth?.accessToken) {
     try {
       result.github = await githubSync(workspace, providers);
       workspace = result.github.workspace || workspace;
     } catch (error) {
-      providers.github.lastError = cleanMessage(error);
-      result.github = { error: providers.github.lastError };
+      const retryable = error.status === 409;
+      if (retryable) {
+        providers.github.lastError = null;
+        providers.github.lastErrorAt = null;
+        result.github = {
+          retryable: error.status === 409,
+          message: "GitHub changed remotely · retrying automatically…",
+        };
+      } else {
+        providers.github.lastError = cleanMessage(error);
+        providers.github.lastErrorAt = new Date().toISOString();
+        result.github = { error: providers.github.lastError };
+      }
     }
-  } else {
-    result.github = { skipped: true };
   }
-  if (providers.googleDrive.auth?.accessToken) {
+  if (authority === "googleDrive" && providers.googleDrive.auth?.accessToken) {
     try {
       result.googleDrive = await googleDriveSync(workspace, providers);
       workspace = result.googleDrive.workspace || workspace;
     } catch (error) {
       providers.googleDrive.lastError = cleanMessage(error);
+      providers.googleDrive.lastErrorAt = new Date().toISOString();
       result.googleDrive = { error: providers.googleDrive.lastError };
     }
-  } else {
-    result.googleDrive = { skipped: true };
   }
   await writeProviders(providers);
   return { result, providers: publicProviderState(providers), workspace };
@@ -891,6 +1005,9 @@ async function handleMessage(message) {
           visibility: message.github.visibility === "public" ? "public" : "private",
           rootDirectory: String(message.github.rootDirectory || "Excalidraw").trim(),
         };
+      }
+      if (["local", "github", "googleDrive"].includes(message.syncAuthority)) {
+        providers.syncAuthority = message.syncAuthority;
       }
       if (message.googleDrive) {
         providers.googleDrive.config = {
@@ -923,7 +1040,10 @@ async function handleMessage(message) {
       return publicProviderState(providers);
     }
     case "sync:workspace":
-      return syncAll(message.workspace);
+      syncInFlight = syncInFlight
+        .catch(() => {})
+        .then(() => syncAll(message.workspace));
+      return syncInFlight;
     case "native:syncWorkspace":
       return nativeMessage({ type: "syncWorkspace", workspace: message.workspace });
     case "native:status":

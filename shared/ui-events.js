@@ -35,7 +35,37 @@
   }
 
   function normalizeTheme(value) {
-    return ["system", "light", "dark"].includes(value) ? value : "system";
+    return ["excalidraw", "system", "light", "dark"].includes(value) ? value : "excalidraw";
+  }
+
+  function excalidrawThemeFromClassName(className = "") {
+    return String(className).split(/\s+/).includes("theme--dark") ? "dark" : "light";
+  }
+
+  function observeExcalidrawTheme({ documentRoot, MutationObserverCtor, onTheme }) {
+    const readTheme = () => excalidrawThemeFromClassName(
+      documentRoot.querySelector(".excalidraw")?.className,
+    );
+    const notify = () => onTheme(readTheme());
+    const observer = new MutationObserverCtor((mutations) => {
+      const themeMayHaveChanged = mutations.some((mutation) =>
+        mutation.type === "attributes"
+          ? mutation.target.matches?.(".excalidraw")
+          : [...mutation.addedNodes].some((node) =>
+            node.nodeType === 1
+            && (node.matches?.(".excalidraw") || node.querySelector?.(".excalidraw")),
+          ),
+      );
+      if (themeMayHaveChanged) notify();
+    });
+    observer.observe(documentRoot.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+      childList: true,
+      subtree: true,
+    });
+    notify();
+    return () => observer.disconnect();
   }
 
   function sidebarViewForOpen() {
@@ -55,12 +85,16 @@
     const intervalSeconds = [5, 15, 30, 60, 300].includes(Number(value.intervalSeconds))
       ? Number(value.intervalSeconds)
       : 30;
+    const syncDelaySeconds = [30, 60, 300].includes(Number(value.syncDelaySeconds))
+      ? Number(value.syncDelaySeconds)
+      : 30;
     const staleMinutes = [1, 5, 10, 30].includes(Number(value.staleMinutes))
       ? Number(value.staleMinutes)
       : 5;
     return {
       mode,
       intervalSeconds,
+      syncDelaySeconds,
       staleMinutes,
       notificationsEnabled: value.notificationsEnabled !== false,
     };
@@ -118,6 +152,24 @@
     return /extension context invalidated/i.test(String(error?.message || error || ""));
   }
 
+  function isSaveShortcut(event = {}) {
+    return String(event.key || "").toLowerCase() === "s" && Boolean(event.metaKey || event.ctrlKey) && !event.altKey;
+  }
+
+  function folderDropMode(clientY, rect = {}) {
+    const top = Number(rect.top) || 0;
+    const height = Math.max(1, Number(rect.height) || 1);
+    const position = (Number(clientY) - top) / height;
+    if (position < 0.25) return "before";
+    if (position > 0.75) return "after";
+    return "inside";
+  }
+
+  function excalidrawControlsOffset({ open = false, railHidden = false } = {}) {
+    if (open) return "min(392px, 94vw)";
+    return railHidden ? "0px" : "44px";
+  }
+
   async function runWithInvalidationRecovery(action, recover) {
     try {
       return await action();
@@ -143,6 +195,14 @@
       x: Math.round(Math.min(maximumX, Math.max(margin, x))),
       y: Math.round(Math.min(maximumY, Math.max(margin, y))),
     };
+  }
+
+  function positionLauncherElement(element, position) {
+    element.style.right = "auto";
+    element.style.bottom = "auto";
+    element.style.left = `${position.x}px`;
+    element.style.top = `${position.y}px`;
+    return position;
   }
 
   function attachDraggableLauncher(element, options) {
@@ -280,12 +340,18 @@
   const api = {
     attachDraggableLauncher,
     clampLauncherPosition,
+    excalidrawControlsOffset,
+    excalidrawThemeFromClassName,
+    folderDropMode,
     getFileSyncHealth,
     getSaveHealth,
     isExtensionContextInvalidated,
+    isSaveShortcut,
     isEditableEvent,
     normalizeSaveSettings,
     normalizeTheme,
+    observeExcalidrawTheme,
+    positionLauncherElement,
     protectEditableEvents,
     runWithInvalidationRecovery,
     shouldHighlightLauncher,

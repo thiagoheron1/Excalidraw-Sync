@@ -13,6 +13,7 @@
   const LOCAL_VAULT_KEY = "excalidrawSync.localVault";
   const LAUNCHER_POSITION_KEY = "excalidrawSync.launcherPosition";
   const LAUNCHER_VISIBLE_KEY = "excalidrawSync.launcherVisible";
+  const SIDEBAR_RAIL_HIDDEN_KEY = "excalidrawSync.sidebarRailHidden";
   const LAUNCHER_INTRODUCED_KEY = "excalidrawSync.launcherIntroduced";
   const THEME_KEY = "excalidrawSync.theme";
   const LANGUAGE_KEY = "excalidrawSync.language";
@@ -28,10 +29,11 @@
   const DURABLE_BACKUP_STORE = "workspace-store";
   const DURABLE_BACKUP_KEY = "workspace";
   const CHANGE_CHECK_INTERVAL_MS = 1000;
-  const CLOUD_SYNC_DELAY_MS = 1800;
   const rootHost = document.createElement("div");
   rootHost.id = "excalidraw-sync-root";
-  rootHost.dataset.theme = "system";
+  rootHost.dataset.theme = ExcalidrawSyncUIEvents.excalidrawThemeFromClassName(
+    document.querySelector(".excalidraw")?.className,
+  );
   document.documentElement.append(rootHost);
   const shadow = rootHost.attachShadow({ mode: "open" });
   ExcalidrawSyncUIEvents.protectEditableEvents(shadow);
@@ -48,10 +50,11 @@
     lastBrowserFingerprint: "",
     syncTimer: null,
     githubPollTimer: null,
-    launcherPosition: { x: 12, y: 76 },
+    launcherPosition: { x: 0, y: 70 },
     launcherVisible: true,
+    sidebarRailHidden: false,
     launcherIntroduced: true,
-    theme: "system",
+    theme: "excalidraw",
     language: ExcalidrawSyncI18n.normalizeLanguage(extensionApi.i18n?.getUILanguage?.() || navigator.language),
     saveSettings: ExcalidrawSyncUIEvents.normalizeSaveSettings(),
     dirtySince: null,
@@ -61,7 +64,11 @@
     notifications: [],
     nativeStorage: { available: false, root: "~/.excalidraw-sync" },
     draggedFileId: null,
+    draggedFolderId: null,
+    importFolderId: null,
   };
+  let settingsSaveTimer = null;
+  let settingsSaveQueue = Promise.resolve();
 
   function t(text) {
     return ExcalidrawSyncI18n.translate(text, state.language);
@@ -74,6 +81,8 @@
   function applyLanguage(value) {
     state.language = ExcalidrawSyncI18n.normalizeLanguage(value);
     rootHost.lang = state.language;
+    const sidebarToggleText = shadow.querySelector(".sidebar-toggle-label");
+    if (sidebarToggleText) sidebarToggleText.textContent = t("Collapse");
   }
 
   function apiCall(target, method, ...args) {
@@ -267,8 +276,8 @@
     button, input, select { font: inherit; }
     button { color: inherit; }
     .launcher {
-      position: fixed; left: 12px; top: 76px; z-index: 2147483000;
-      min-width: 64px; height: 62px; border: 1px solid rgba(121,113,234,.5);
+      position: fixed; right: 12px; top: 70px; z-index: 2147483000;
+      width: 64px; min-width: 64px; max-width: 64px; height: 62px; min-height: 62px; max-height: 62px; border: 1px solid rgba(121,113,234,.5);
       border-radius: 16px; background: linear-gradient(145deg, #7c78ec, var(--accent-solid)); color: #fff;
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
       cursor: grab; box-shadow: 0 10px 30px rgba(30,27,75,.3); padding: 6px 8px 5px;
@@ -296,13 +305,27 @@
     .backdrop.open { opacity: 1; pointer-events: auto; }
     .panel {
       position: fixed; inset: 0 auto 0 0; z-index: 2147482998; width: min(392px, 94vw);
-      transform: translateX(-102%); transition: transform .23s cubic-bezier(.2,.7,.2,1);
+      transform: translateX(calc(-100% + 44px)); transition: transform .23s cubic-bezier(.2,.7,.2,1);
       background: var(--bg); color: var(--text); border-right: 1px solid var(--border);
       box-shadow: 18px 0 44px var(--panel-shadow); display: flex; flex-direction: column;
       font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 13px; line-height: 1.4; color-scheme: inherit;
     }
     .panel.open { transform: translateX(0); }
+    .panel.collapsed { background: var(--bg); color: var(--text); border-right-color: var(--border); box-shadow: 8px 0 24px var(--panel-shadow); cursor: pointer; }
+    .panel.collapsed.rail-hidden { transform: translateX(-102%); pointer-events: none; }
+    .collapsed-brand { position: absolute; z-index: 2; top: 16px; right: 0; bottom: 56px; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--text); pointer-events: none; }
+    .collapsed-brand svg { flex: 0 0 auto; }
+    .collapsed-brand span { writing-mode: vertical-rl; text-orientation: mixed; font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif; font-size: 10px; line-height: 1; font-weight: 700; letter-spacing: .045em; }
+    .panel.open .collapsed-brand { display: none; }
+    .panel:not(.open) .panel-header, .panel:not(.open) .panel-body, .panel:not(.open) .panel-footer { visibility: hidden; pointer-events: none; }
+    .sidebar-toggle { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; width: 100%; height: 44px; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: var(--surface); color: var(--text); display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 -4px 14px var(--panel-shadow); }
+    .panel.collapsed .sidebar-toggle { justify-content: flex-end; padding-right: 12px; background: var(--surface); border-color: var(--border); color: var(--text); box-shadow: none; }
+    .sidebar-toggle-label { font-size: 11px; font-weight: 650; }
+    .panel.collapsed .sidebar-toggle-label { display: none; }
+    .panel.open .sidebar-toggle { gap: 7px; }
+    .panel:not(.open) .sidebar-toggle svg { transform: rotate(-90deg); }
+    .panel.open .sidebar-toggle svg { transform: rotate(90deg); }
     .panel-header { display: flex; align-items: center; gap: 9px; padding: 15px 14px 13px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--surface), var(--bg)); }
     .brand-mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: white; background: linear-gradient(145deg, #7c78ec, var(--accent-solid)); box-shadow: 0 5px 16px rgba(71,65,170,.22); }
     .brand { min-width: 0; flex: 1; }
@@ -318,9 +341,10 @@
     .search { width: 100%; height: 39px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); padding: 0 11px 0 37px; transition: border-color .16s ease, box-shadow .16s ease; }
     .search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--active-bg); }
     .search::placeholder { color: var(--placeholder); }
-    .quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0 3px 10px; }
-    .quick-action { min-height: 42px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); display: flex; align-items: center; gap: 8px; padding: 0 10px; cursor: pointer; text-align: left; font-size: 12px; font-weight: 620; transition: transform .14s ease, border-color .14s ease, background .14s ease; }
-    .quick-action:hover { border-color: var(--hover-border); background: var(--surface-2); transform: translateY(-1px); }
+    .quick-grid { display: flex; flex-direction: column; gap: 2px; margin: 0 3px 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+    .quick-action { width: 100%; min-height: 40px; border: 0; border-radius: 8px; background: transparent; display: flex; align-items: center; gap: 10px; padding: 0 9px; cursor: pointer; text-align: left; font-size: 12px; font-weight: 620; transition: background .14s ease, color .14s ease; }
+    .quick-action svg { color: var(--accent); }
+    .quick-action:hover { background: var(--surface-2); transform: none; }
     .sync-row { display: flex; align-items: center; gap: 7px; margin: 0 3px 10px; padding: 7px 9px; border-radius: 9px; background: var(--active-bg); color: var(--accent-text); }
     .sync-row.pending { background: rgba(245,158,11,.16); color: #b66a00; }
     .sync-row.stale { background: var(--danger-soft); color: var(--danger); border: 1px solid currentColor; }
@@ -328,25 +352,30 @@
     .sync-row button { border: 0; background: var(--surface); color: var(--accent); cursor: pointer; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border-radius: 8px; }
     .sync-row button:hover, .header-sync:hover { background: var(--surface-2); }
     .header-sync.syncing svg { animation: spin .9s linear infinite; }
-    .cloud-status { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0 3px 10px; }
+    .cloud-status { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0 3px 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
     .cloud-provider { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; padding: 8px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
     .cloud-provider.has-error { border-color: var(--error-border); background: var(--danger-soft); }
     .cloud-provider-copy { min-width: 0; }
     .cloud-provider-copy strong { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 650; white-space: nowrap; }
-    .cloud-provider-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cloud-provider-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
     .auto-state { display: inline-flex; align-items: center; padding: 1px 5px; border-radius: 99px; background: var(--badge-bg); color: var(--muted); font-size: 8px; font-weight: 750; letter-spacing: .02em; text-transform: uppercase; }
     .auto-state.on { background: var(--success-bg); color: var(--success); }
     .section { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 5px; }
     .section-title { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
     .section-title .section-title-spacer { flex: 1; }
+    .root-drop-hint { display: none; color: var(--accent-text); font-size: 9px; font-weight: 650; letter-spacing: 0; text-transform: none; }
+    .panel-body.folder-dragging .root-drop-hint { display: inline; }
+    [data-drop-root].drag-target { border-radius: 8px; background: var(--active-bg); outline: 2px solid var(--accent); outline-offset: 1px; }
     .folder { margin: 3px 0 7px; }
-    .folder-head { display: flex; align-items: center; gap: 6px; min-height: 34px; border-radius: 8px; padding: 0 4px 0 2px; }
+    .folder-head { display: flex; align-items: center; gap: 6px; min-height: 34px; border-radius: 8px; padding: 0 4px 0 2px; cursor: grab; }
+    .folder.dragging { opacity: .48; }
     .folder-head:hover { background: var(--subtle-hover); }
     .folder-toggle { border: 0; background: transparent; flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; text-align: left; font-size: 12px; font-weight: 620; cursor: pointer; padding: 7px 4px; }
     .folder-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .folder-toggle .chevron { transition: transform .16s ease; }
     .folder.collapsed .chevron { transform: rotate(-90deg); }
     .folder.collapsed .folder-files { display: none; }
+    .folder-children { margin-left: 14px; padding-left: 7px; border-left: 1px solid var(--border); }
     .row-actions { display: flex; align-items: center; gap: 1px; }
     .row-action { width: 27px; height: 27px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
     .row-action:hover { background: var(--surface-2); color: var(--text); }
@@ -358,8 +387,12 @@
     .file-row.sync-stale { background: var(--stale-bg); border-color: var(--danger); }
     .file-row.active.sync-pending, .file-row.active.sync-stale { box-shadow: inset 3px 0 currentColor; }
     .file-row.dragging { opacity: .48; }
-    .file-row.drag-target, .folder.drag-target { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .file-row.drag-target, .folder.drag-target > .folder-head { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .folder.nest-target > .folder-head { background: var(--active-bg); outline-style: solid; box-shadow: inset 0 0 0 1px var(--accent); }
     .sync-warning { color: var(--warning-border); display: grid; place-items: center; flex: 0 0 auto; }
+    .has-tooltip { position: relative; }
+    .has-tooltip::after { content: attr(data-tooltip); position: absolute; z-index: 8; left: 50%; bottom: calc(100% + 5px); width: max-content; max-width: 250px; transform: translateX(-50%); padding: 6px 8px; border: 1px solid var(--toast-border); border-radius: 7px; background: var(--toast-bg); color: var(--toast-text); box-shadow: 0 6px 18px var(--panel-shadow); font-size: 10px; line-height: 1.35; text-align: left; white-space: normal; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .06s linear; }
+    .has-tooltip:hover::after, .has-tooltip:focus-visible::after { opacity: 1; visibility: visible; }
     .sync-stale .sync-warning { color: var(--danger); animation: alert-pulse 1.6s infinite; }
     .file-main { border: 0; background: transparent; flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; text-align: left; cursor: pointer; padding: 7px 0; font-size: 12px; }
     .file-main .file-copy { min-width: 0; }
@@ -368,7 +401,7 @@
     .file-main svg { flex: 0 0 auto; color: var(--accent); }
     .pinned { margin: 2px 0 13px; }
     .empty { color: var(--muted); padding: 11px 9px 16px; font-size: 11px; }
-    .panel-footer { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 10px 14px 12px; color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 8px; }
+    .panel-footer { flex: 0 0 auto; margin-bottom: 44px; border-top: 1px solid var(--border); padding: 10px 14px 12px; color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 8px; }
     .panel-footer .dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; }
     .panel-footer.busy .dot { background: #fbbf24; animation: pulse 1s infinite; }
     .panel-footer.pending .dot { background: #f59e0b; }
@@ -426,7 +459,9 @@
     .provider-config .settings-grid { margin-bottom: 7px; }
     .provider-note { margin: 5px 0 0; color: var(--muted); font-size: 9.5px; line-height: 1.4; }
     .provider-note.error { color: var(--danger); }
-    .settings-actions { position: sticky; bottom: -20px; display: flex; justify-content: flex-end; padding: 8px 0 2px; background: linear-gradient(transparent, var(--bg) 32%); }
+    .settings-auto-save { min-height: 18px; margin: 0; color: var(--muted); font-size: 10px; text-align: center; }
+    .settings-auto-save[data-state="saving"] { color: var(--accent-link); }
+    .settings-auto-save[data-state="error"] { color: var(--danger); }
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 13px; padding: 13px; margin: 0 0 10px; box-shadow: 0 4px 14px rgba(20,20,35,.04); }
     .card-head { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
     .card-head strong { flex: 1; font-size: 13px; }
@@ -458,6 +493,19 @@
     .notification-copy strong { display: block; font-size: 13px; }
     .notification-copy span { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
     .notification-copy time { display: block; color: var(--muted); font-size: 9.5px; margin-top: 5px; }
+    .trash-list { display: grid; gap: 7px; }
+    .trash-item { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+    .trash-item-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: var(--danger-soft); color: var(--danger); }
+    .trash-item-copy { min-width: 0; }
+    .trash-item-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+    .trash-item-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 9.5px; }
+    .trash-item.folder-backup { display: block; }
+    .trash-tree { display: grid; gap: 5px; }
+    .trash-tree-children { margin-left: 15px; padding-left: 8px; border-left: 1px solid var(--border); }
+    .trash-tree-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 34px; }
+    .trash-tree-row + .trash-tree-children { margin-top: 3px; }
+    .trash-tree-row .trash-item-icon { width: 24px; height: 24px; border-radius: 7px; }
+    .trash-tree-row .button { min-height: 29px; padding: 0 8px; font-size: 10px; }
     .setup-guide { margin-top: 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--subtle-hover); }
     .setup-guide summary { cursor: pointer; padding: 8px 10px; color: var(--accent-link); font-size: 11px; font-weight: 650; }
     .setup-guide ol { margin: 0; padding: 0 12px 10px 29px; color: var(--muted); font-size: 10.5px; }
@@ -473,11 +521,16 @@
     .dialog p { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
     .dialog .field input, .dialog .field select { background: var(--dialog-input); }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .menu-root { position: fixed; inset: 0; z-index: 2147483001; pointer-events: none; }
+    .action-dropdown { position: fixed; min-width: 190px; max-width: min(260px, calc(100vw - 16px)); padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--dialog-bg); box-shadow: 0 14px 38px var(--dialog-shadow); color: var(--text); pointer-events: auto; font: 11px/1.35 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .action-dropdown button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 7px; background: transparent; color: inherit; padding: 7px 9px; text-align: left; cursor: pointer; }
+    .action-dropdown button:hover, .action-dropdown button:focus-visible { background: var(--surface-2); }
+    .action-dropdown button.danger { color: var(--danger); }
     .toast { position: fixed; left: 50%; bottom: 24px; z-index: 2147483002; transform: translate(-50%, 18px); opacity: 0; max-width: min(430px, 88vw); border: 1px solid var(--toast-border); border-radius: 10px; background: var(--toast-bg); color: var(--toast-text); padding: 10px 14px; box-shadow: 0 12px 34px var(--panel-shadow); font: 13px/1.4 ui-sans-serif, -apple-system, sans-serif; transition: opacity .18s ease, transform .18s ease; }
     .toast.show { opacity: 1; transform: translate(-50%, 0); }
     .toast.error { border-color: var(--error-border); }
     @media (max-width: 600px) {
-      .launcher { left: 8px; top: 70px; min-width: 60px; height: 58px; }
+      .launcher { right: 8px; top: 70px; width: 60px; min-width: 60px; max-width: 60px; height: 58px; min-height: 58px; max-height: 58px; }
       .panel { width: min(350px, 94vw); }
       .row-action { width: 34px; height: 34px; }
     }
@@ -499,11 +552,14 @@
   replaceMarkup(shadow, `
     <button class="launcher" type="button" aria-label="Open ExcaliSync. Drag to move." aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown" title="Drag to move · Click to open">${icon("logo", 24)}<span class="launcher-label">ExcaliSync</span></button>
     <div class="backdrop" aria-hidden="true"></div>
-    <aside class="panel" aria-label="Excalidraw Sync sidebar" aria-hidden="true">
+    <aside class="panel collapsed" aria-label="Excalidraw Sync sidebar">
+      <div class="collapsed-brand" aria-hidden="true">${icon("logo", 22)}<span>ExcaliSync</span></div>
+      <button class="sidebar-toggle" type="button" data-action="toggle-sidebar" aria-label="Expand sidebar" aria-expanded="false" title="Expand sidebar">${icon("chevron", 18)}<span class="sidebar-toggle-label">Collapse</span></button>
       <header class="panel-header"></header>
       <main class="panel-body"></main>
       <footer class="panel-footer"><span class="dot"></span><span class="footer-status">Saved locally</span></footer>
     </aside>
+    <div class="menu-root"></div>
     <div class="modal-root"></div>
     <div class="toast" role="status" aria-live="polite"></div>
     <input class="file-picker" type="file" accept=".excalidraw,application/json" multiple hidden>
@@ -511,6 +567,17 @@
   const styleElement = document.createElement("style");
   styleElement.textContent = styles;
   shadow.prepend(styleElement);
+
+  const hostStyleElement = document.createElement("style");
+  hostStyleElement.id = "excalidraw-sync-host-styles";
+  hostStyleElement.textContent = `
+    .excalidraw .layer-ui__wrapper__footer-left,
+    .excalidraw .App-menu_top > .App-menu_top__left {
+      margin-left: var(--excalidraw-sync-left-offset, 0px) !important;
+      transition: margin-left .23s cubic-bezier(.2,.7,.2,1);
+    }
+  `;
+  (document.head || document.documentElement).append(hostStyleElement);
 
   const elements = {
     launcher: shadow.querySelector(".launcher"),
@@ -520,6 +587,7 @@
     body: shadow.querySelector(".panel-body"),
     footer: shadow.querySelector(".panel-footer"),
     footerStatus: shadow.querySelector(".footer-status"),
+    menuRoot: shadow.querySelector(".menu-root"),
     modalRoot: shadow.querySelector(".modal-root"),
     toast: shadow.querySelector(".toast"),
     filePicker: shadow.querySelector(".file-picker"),
@@ -548,7 +616,8 @@
   }
 
   function hasConnectedCloud() {
-    return Boolean(state.providers?.github?.connected || state.providers?.googleDrive?.connected);
+    const authority = state.providers?.syncAuthority;
+    return Boolean(authority && authority !== "local" && state.providers?.[authority]?.connected);
   }
 
   function formatRelativeTime(dateValue) {
@@ -668,10 +737,16 @@
       acknowledgeLauncherIntroduction();
     }
     state.open = open;
+    updateExcalidrawControlsOffset();
     elements.panel.classList.toggle("open", open);
+    elements.panel.classList.toggle("collapsed", !open);
     elements.backdrop.classList.toggle("open", open);
     elements.launcher.classList.toggle("is-hidden", open);
-    elements.panel.setAttribute("aria-hidden", String(!open));
+    const sidebarToggle = elements.panel.querySelector("[data-action='toggle-sidebar']");
+    const sidebarToggleLabel = state.open ? "Collapse sidebar" : "Expand sidebar";
+    sidebarToggle?.setAttribute("aria-label", t(sidebarToggleLabel));
+    sidebarToggle?.setAttribute("title", t(sidebarToggleLabel));
+    sidebarToggle?.setAttribute("aria-expanded", String(state.open));
     if (open) {
       render();
       requestAnimationFrame(() => elements.panel.querySelector("button, input")?.focus());
@@ -680,9 +755,28 @@
 
   function applyTheme(value) {
     state.theme = ExcalidrawSyncUIEvents.normalizeTheme(value);
-    rootHost.dataset.theme = state.theme;
+    if (state.theme === "excalidraw") {
+      syncThemeWithExcalidraw();
+    } else {
+      rootHost.dataset.theme = state.theme;
+    }
     return state.theme;
   }
+
+  function syncThemeWithExcalidraw() {
+    if (state.theme !== "excalidraw") return;
+    rootHost.dataset.theme = ExcalidrawSyncUIEvents.excalidrawThemeFromClassName(
+      document.querySelector(".excalidraw")?.className,
+    );
+  }
+
+  ExcalidrawSyncUIEvents.observeExcalidrawTheme({
+    documentRoot: document,
+    MutationObserverCtor: MutationObserver,
+    onTheme: (theme) => {
+      if (state.theme === "excalidraw") rootHost.dataset.theme = theme;
+    },
+  });
 
   function applyLauncherVisibility(visible) {
     state.launcherVisible = visible !== false;
@@ -690,6 +784,23 @@
     updateLauncherIntroduction();
     return state.launcherVisible;
   }
+
+  function applySidebarRailVisibility(hidden) {
+    state.sidebarRailHidden = hidden === true;
+    elements.panel.classList.toggle("rail-hidden", state.sidebarRailHidden);
+    updateExcalidrawControlsOffset();
+    return state.sidebarRailHidden;
+  }
+
+  function updateExcalidrawControlsOffset() {
+    const offset = ExcalidrawSyncUIEvents.excalidrawControlsOffset({
+      open: state.open,
+      railHidden: state.sidebarRailHidden,
+    });
+    document.documentElement.style.setProperty("--excalidraw-sync-left-offset", offset);
+  }
+
+  updateExcalidrawControlsOffset();
 
   function updateLauncherIntroduction() {
     const highlighted = ExcalidrawSyncUIEvents.shouldHighlightLauncher({
@@ -724,6 +835,22 @@
     };
   }
 
+  function defaultLauncherPosition() {
+    const size = launcherSize();
+    return ExcalidrawSyncUIEvents.clampLauncherPosition(
+      { x: window.innerWidth - size.width - 12, y: 70 },
+      { width: window.innerWidth, height: window.innerHeight },
+      size,
+    );
+  }
+
+  function startupLauncherPosition(savedPosition) {
+    const legacyTopRight = savedPosition
+      && Number(savedPosition.y) <= 20
+      && Number(savedPosition.x) >= window.innerWidth - 240;
+    return !savedPosition || legacyTopRight ? defaultLauncherPosition() : savedPosition;
+  }
+
   function applyLauncherPosition(position) {
     const next = ExcalidrawSyncUIEvents.clampLauncherPosition(
       position,
@@ -731,8 +858,7 @@
       launcherSize(),
     );
     state.launcherPosition = next;
-    elements.launcher.style.left = `${next.x}px`;
-    elements.launcher.style.top = `${next.y}px`;
+    ExcalidrawSyncUIEvents.positionLauncherElement(elements.launcher, next);
     return next;
   }
 
@@ -1002,13 +1128,12 @@
     return true;
   }
 
-  function scheduleCloudSync() {
+  function scheduleCloudSync(delayMs = state.saveSettings.syncDelaySeconds * 1000) {
     clearTimeout(state.syncTimer);
-    const connected = state.providers?.github?.connected || state.providers?.googleDrive?.connected;
-    if (!connected) {
+    if (!hasConnectedCloud()) {
       return;
     }
-    state.syncTimer = setTimeout(() => syncNow({ quiet: true }), CLOUD_SYNC_DELAY_MS);
+    state.syncTimer = setTimeout(() => syncNow({ quiet: true }), delayMs);
   }
 
   async function syncNow({ quiet = false } = {}) {
@@ -1034,6 +1159,16 @@
           await applySceneInPlace(mergedActive.scene);
         }
       }
+      const retryableFailure = [result.result.github, result.result.googleDrive]
+        .find((providerResult) => providerResult?.retryable);
+      if (retryableFailure) {
+        state.status = retryableFailure.message || "Cloud changed remotely · retrying…";
+        state.unsyncedSince ||= ExcalidrawSyncCore.nowIso();
+        await persistSaveState();
+        scheduleCloudSync(5000);
+        if (!quiet) showToast(state.status);
+        return;
+      }
       const errors = [result.result.github?.error, result.result.googleDrive?.error].filter(Boolean);
       if (errors.length) {
         throw new Error(errors.join(" "));
@@ -1050,9 +1185,13 @@
       await persistSaveState();
       updateSaveIndicators({ rerenderHeader: false });
       if (!quiet) {
-        showToast("Your drawings are up to date.");
+        showToast(hasConnectedCloud() ? "Your drawings are up to date." : "Saved locally.");
       }
     } catch (error) {
+      if (ExcalidrawSyncUIEvents.isExtensionContextInvalidated(error)) {
+        await recoverInvalidatedContext(error);
+        return;
+      }
       state.status = "Sync needs attention";
       addNotification("error", "Cloud sync needs attention", error.message);
       recordError("cloud-sync", error);
@@ -1062,7 +1201,7 @@
       }
     } finally {
       setBusy(false, state.status);
-      if (state.open && state.view === "manage") {
+      if (state.open && (state.view === "files" || state.view === "manage")) {
         render();
       }
     }
@@ -1076,6 +1215,7 @@
     if (!folder) {
       folder = {
         id: ExcalidrawSyncCore.makeId("folder"),
+        parentId: null,
         name: ExcalidrawSyncCore.DEFAULT_FOLDER_NAME,
         createdAt: ExcalidrawSyncCore.nowIso(),
         updatedAt: ExcalidrawSyncCore.nowIso(),
@@ -1154,7 +1294,7 @@
                       ? `<select name="${escapeHtml(field.name)}">${field.options
                           .map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === field.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
                           .join("")}</select>`
-                      : `<input type="${escapeHtml(field.type || "text")}" name="${escapeHtml(field.name)}" value="${escapeHtml(field.value || "")}" ${field.required ? "required" : ""} maxlength="${escapeHtml(field.maxLength || 120)}">`
+                      : `<input type="${escapeHtml(field.type || "text")}" name="${escapeHtml(field.name)}" value="${escapeHtml(field.value || "")}" placeholder="${escapeHtml(field.placeholder || "")}" ${field.required ? "required" : ""} maxlength="${escapeHtml(field.maxLength || 120)}">`
                   }
                 </label>`,
             )
@@ -1187,6 +1327,211 @@
     });
   }
 
+  function dismissActionDropdown(value = null) {
+    const menu = elements.menuRoot.firstElementChild;
+    if (!menu) return;
+    menu._cleanup?.();
+    menu._anchor?.setAttribute("aria-expanded", "false");
+    menu.remove();
+    menu._resolve?.(value);
+  }
+
+  function showActionDropdown(anchor, { label, actions }) {
+    dismissActionDropdown();
+    return new Promise((resolve) => {
+      const menu = document.createElement("div");
+      menu.className = "action-dropdown";
+      menu.setAttribute("role", "menu");
+      menu.setAttribute("aria-label", label);
+      menu._resolve = resolve;
+      menu._anchor = anchor;
+      replaceMarkup(menu, actions.map((action) => `<button class="${action.danger ? "danger" : ""}" type="button" role="menuitem" data-menu-action="${escapeHtml(action.value)}">${icon(action.icon, 16)} <span>${escapeHtml(action.label)}</span></button>`).join(""));
+      localizeUi(menu);
+      elements.menuRoot.append(menu);
+      anchor.setAttribute("aria-haspopup", "menu");
+      anchor.setAttribute("aria-expanded", "true");
+      const anchorBounds = anchor.getBoundingClientRect();
+      const menuBounds = menu.getBoundingClientRect();
+      const left = Math.min(window.innerWidth - menuBounds.width - 8, Math.max(8, anchorBounds.right - menuBounds.width));
+      const below = anchorBounds.bottom + 4;
+      const top = below + menuBounds.height <= window.innerHeight - 8
+        ? below
+        : Math.max(8, anchorBounds.top - menuBounds.height - 4);
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+      const closeFromOutside = (event) => {
+        const path = event.composedPath();
+        if (!path.includes(menu) && !path.includes(anchor)) dismissActionDropdown();
+      };
+      const handleKeys = (event) => {
+        const items = [...menu.querySelectorAll('[role="menuitem"]')];
+        const index = items.indexOf(shadow.activeElement);
+        if (event.key === "Escape") {
+          event.preventDefault();
+          dismissActionDropdown();
+          anchor.focus();
+        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const offset = event.key === "ArrowDown" ? 1 : -1;
+          items[(index + offset + items.length) % items.length]?.focus();
+        }
+      };
+      menu._cleanup = () => {
+        document.removeEventListener("pointerdown", closeFromOutside, true);
+        menu.removeEventListener("keydown", handleKeys);
+      };
+      document.addEventListener("pointerdown", closeFromOutside, true);
+      menu.addEventListener("keydown", handleKeys);
+      menu.addEventListener("click", (event) => {
+        const action = event.target.closest("[data-menu-action]");
+        if (action) dismissActionDropdown(action.dataset.menuAction);
+      });
+      requestAnimationFrame(() => menu.querySelector("button")?.focus());
+    });
+  }
+
+  async function openFolderSectionMenu(anchor) {
+    const action = await showActionDropdown(anchor, {
+      label: "Folder actions",
+      actions: [
+        { value: "new-file", label: "New file", icon: "file" },
+        { value: "new-folder", label: "New folder", icon: "folder" },
+        { value: "import-file", label: "Import from file", icon: "import" },
+        { value: "import-link", label: "Import from link", icon: "link" },
+        { value: "sort", label: "Order folders and files", icon: "more" },
+      ],
+    });
+    if (action === "new-file") await createFile();
+    if (action === "new-folder") await createFolder();
+    if (action === "import-file") {
+      state.importFolderId = null;
+      elements.filePicker.click();
+    }
+    if (action === "import-link") await importSharedLink();
+    if (action === "sort") await chooseSortMode();
+  }
+
+  async function openFolderMenu(folderId, anchor) {
+    const folder = state.workspace.folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    const action = await showActionDropdown(anchor, {
+      label: `Actions for ${folder.name}`,
+      actions: [
+        { value: "add", label: "New file", icon: "plus" },
+        { value: "subfolder", label: "New subfolder", icon: "folder" },
+        { value: "move", label: "Move folder", icon: "folder" },
+        { value: "rename", label: "Rename folder", icon: "edit" },
+        { value: "delete", label: "Delete folder", icon: "trash", danger: true },
+      ],
+    });
+    if (action === "add") await createFile(folderId);
+    if (action === "subfolder") await createFolder(folderId);
+    if (action === "move") await moveFolderToParent(folderId);
+    if (action === "rename") await renameEntry("folder", folderId);
+    if (action === "delete") await confirmDelete("folder", folderId);
+  }
+
+  function folderLabel(folderId) {
+    const foldersById = new Map(state.workspace.folders.map((folder) => [folder.id, folder]));
+    const labels = [];
+    const seen = new Set();
+    let folder = foldersById.get(folderId);
+    while (folder && !seen.has(folder.id)) {
+      seen.add(folder.id);
+      labels.unshift(folder.name);
+      folder = foldersById.get(folder.parentId);
+    }
+    return labels.join(" / ");
+  }
+
+  function folderOptions({ excludeId = null, includeRoot = false } = {}) {
+    const excluded = new Set();
+    if (excludeId) {
+      excluded.add(excludeId);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const folder of state.workspace.folders) {
+          if (folder.parentId && excluded.has(folder.parentId) && !excluded.has(folder.id)) {
+            excluded.add(folder.id);
+            changed = true;
+          }
+        }
+      }
+    }
+    return [
+      ...(includeRoot ? [{ value: "", label: "Top level" }] : []),
+      ...state.workspace.folders
+        .filter((folder) => !excluded.has(folder.id))
+        .map((folder) => ({ value: folder.id, label: folderLabel(folder.id) })),
+    ];
+  }
+
+  async function moveFolderToParent(folderId) {
+    const folder = state.workspace.folders.find((item) => item.id === folderId);
+    if (!folder) return;
+    const result = await showFormDialog({
+      title: "Move folder",
+      fields: [{
+        name: "parentId",
+        label: "Parent folder",
+        type: "select",
+        value: folder.parentId || "",
+        options: folderOptions({ excludeId: folderId, includeRoot: true }),
+      }],
+      confirmLabel: "Move",
+    });
+    if (!result) return;
+    state.workspace = ExcalidrawSyncCore.moveFolderToParent(state.workspace, folderId, result.parentId || null);
+    await persistWorkspace();
+    render();
+  }
+
+  async function editFileDetails(fileId) {
+    const file = state.workspace.files.find((item) => item.id === fileId);
+    if (!file) return;
+    const result = await showFormDialog({
+      title: "File details",
+      fields: [
+        {
+          name: "folderId", label: "Folder", type: "select", value: file.folderId,
+          options: folderOptions(),
+        },
+        { name: "name", label: "File name", value: file.name, required: true },
+      ],
+      confirmLabel: "Save",
+    });
+    if (!result) return;
+    file.folderId = result.folderId;
+    file.name = result.name.trim() || file.name;
+    file.updatedAt = ExcalidrawSyncCore.nowIso();
+    await persistWorkspace();
+    render();
+  }
+
+  async function openFileMenu(fileId, anchor) {
+    const file = state.workspace.files.find((item) => item.id === fileId);
+    if (!file) return;
+    const action = await showActionDropdown(anchor, {
+      label: `Actions for ${file.name}`,
+      actions: [
+        { value: "details", label: "File details", icon: "edit" },
+        { value: "share", label: "Copy read-only link", icon: "link" },
+        { value: "pin", label: file.pinned ? "Unpin file" : "Pin file", icon: "pin" },
+        { value: "delete", label: "Delete file", icon: "trash", danger: true },
+      ],
+    });
+    if (action === "details") await editFileDetails(fileId);
+    if (action === "share") await copyShareLink(fileId);
+    if (action === "pin") {
+      file.pinned = !file.pinned;
+      file.updatedAt = ExcalidrawSyncCore.nowIso();
+      await persistWorkspace();
+      render();
+    }
+    if (action === "delete") await confirmDelete("file", fileId);
+  }
+
   async function createFile(folderId = null) {
     const folders = state.workspace.folders;
     if (!folders.length) {
@@ -1195,13 +1540,13 @@
     const result = await showFormDialog({
       title: "New file",
       fields: [
-        { name: "name", label: "File name", value: "Untitled", required: true },
+        { name: "name", label: "File name", value: "", placeholder: "New File", required: true },
         {
           name: "folderId",
           label: "Folder",
           type: "select",
           value: folderId || state.workspace.folders[0]?.id,
-          options: state.workspace.folders.map((folder) => ({ value: folder.id, label: folder.name })),
+          options: folderOptions(),
         },
       ],
       confirmLabel: "Create file",
@@ -1226,10 +1571,16 @@
     await switchFile(file.id);
   }
 
-  async function createFolder() {
+  async function createFolder(parentId = null) {
     const result = await showFormDialog({
       title: "New folder",
-      fields: [{ name: "name", label: "Folder name", value: "New folder", required: true }],
+      fields: [
+        { name: "name", label: "Folder name", value: "", placeholder: "New Folder", required: true },
+        {
+          name: "parentId", label: "Parent folder", type: "select", value: parentId || "",
+          options: folderOptions({ includeRoot: true }),
+        },
+      ],
       confirmLabel: "Create folder",
     });
     if (!result) {
@@ -1238,6 +1589,7 @@
     const now = ExcalidrawSyncCore.nowIso();
     const folder = {
       id: ExcalidrawSyncCore.makeId("folder"),
+      parentId: result.parentId || null,
       name: result.name.trim() || "New folder",
       createdAt: now,
       updatedAt: now,
@@ -1326,6 +1678,27 @@
       await applySceneInPlace(next.scene);
       setOpen(true);
     }
+  }
+
+  async function restoreTrashItem(kind, id) {
+    state.workspace = ExcalidrawSyncCore.restoreTrashEntry(state.workspace, kind, id);
+    await persistWorkspace();
+    render();
+    showToast(`${kind === "folder" ? "Folder" : "File"} restored from Trash.`);
+  }
+
+  async function restoreTrashedFileItem(trashFolderId, fileId) {
+    state.workspace = ExcalidrawSyncCore.restoreTrashedFile(state.workspace, trashFolderId, fileId);
+    await persistWorkspace();
+    render();
+    showToast("File restored from Trash.");
+  }
+
+  async function restoreTrashedFolderItem(trashFolderId, folderId) {
+    state.workspace = ExcalidrawSyncCore.restoreTrashedFolder(state.workspace, trashFolderId, folderId);
+    await persistWorkspace();
+    render();
+    showToast("Folder restored from Trash.");
   }
 
   async function deleteAllLocalFiles() {
@@ -1430,17 +1803,18 @@
     throw new Error("Excalidraw did not finish the request in time.");
   }
 
-  async function importSharedLink() {
+  async function importSharedLink(folderId = null) {
+    const destinationFields = folderId ? [] : [{
+      name: "folderId", label: "Folder", type: "select", value: state.workspace.folders[0]?.id,
+      options: state.workspace.folders.map((folder) => ({ value: folder.id, label: folder.name })),
+    }];
     const result = await showFormDialog({
       title: "Import shared drawing",
       description: "Paste an Excalidraw read-only share link and choose its destination.",
       fields: [
         { name: "url", label: "Excalidraw link", type: "url", value: "", required: true, maxLength: 4096 },
         { name: "name", label: "File name", value: "Imported drawing", required: true },
-        {
-          name: "folderId", label: "Folder", type: "select", value: state.workspace.folders[0]?.id,
-          options: state.workspace.folders.map((folder) => ({ value: folder.id, label: folder.name })),
-        },
+        ...destinationFields,
       ],
       confirmLabel: "Import link",
     });
@@ -1461,7 +1835,7 @@
       const scene = await captureScene();
       const now = ExcalidrawSyncCore.nowIso();
       state.workspace.files.push({
-        id: ExcalidrawSyncCore.makeId("file"), folderId: result.folderId,
+        id: ExcalidrawSyncCore.makeId("file"), folderId: folderId || result.folderId,
         name: result.name.trim() || "Imported drawing", pinned: false, scene,
         hash: ExcalidrawSyncCore.hashScene(scene), createdAt: now, updatedAt: now,
       });
@@ -1517,18 +1891,29 @@
 
   async function chooseSortMode() {
     const result = await showFormDialog({
-      title: "Order files",
-      fields: [{
-        name: "sortMode", label: "Order", type: "select", value: state.workspace.sortMode,
-        options: [
-          { value: "manual", label: "Manual (drag and drop)" },
-          { value: "alphabetical", label: "Alphabetically" },
-          { value: "updated", label: "Last updated" },
-        ],
-      }],
+      title: "Order folders and files",
+      fields: [
+        {
+          name: "folderSortMode", label: "Folder order", type: "select", value: state.workspace.folderSortMode,
+          options: [
+            { value: "manual", label: "Custom (drag and drop)" },
+            { value: "alphabetical", label: "Alphabetically" },
+            { value: "updated", label: "Last updated" },
+          ],
+        },
+        {
+          name: "sortMode", label: "File order", type: "select", value: state.workspace.sortMode,
+          options: [
+            { value: "manual", label: "Custom (drag and drop)" },
+            { value: "alphabetical", label: "Alphabetically" },
+            { value: "updated", label: "Last updated" },
+          ],
+        },
+      ],
       confirmLabel: "Apply",
     });
     if (!result) return;
+    state.workspace.folderSortMode = result.folderSortMode;
     state.workspace.sortMode = result.sortMode;
     await persistWorkspace();
     render();
@@ -1580,27 +1965,30 @@
       }
       if (!warning) {
         warning = document.createElement("span");
-        warning.className = "sync-warning";
+        warning.className = "sync-warning has-tooltip";
         warning.setAttribute("role", "img");
         replaceMarkup(warning, icon("alert", 17));
         row.querySelector(":scope > .row-actions")?.before(warning);
       }
       warning.setAttribute("aria-label", message);
       warning.title = message;
+      warning.dataset.tooltip = message;
     }
   }
 
   function providerHomeCard(providerName, label, provider) {
     const connected = Boolean(provider?.connected);
-    const hasError = Boolean(provider?.lastError);
+    const automatic = connected && state.providers?.syncAuthority === providerName;
+    const hasError = ExcalidrawSyncCore.hasActiveProviderError(provider);
     const lastSync = provider?.lastSyncAt
       ? `Last sync ${formatRelativeTime(provider.lastSyncAt)}`
       : connected ? "Waiting for first sync" : "Not connected";
-    const automaticLabel = connected ? "Automatic sync on" : "Automatic sync off";
+    const automaticLabel = automatic ? "Automatic sync on" : "Automatic sync off";
+    const statusMessage = hasError ? `${provider.lastError} · ${lastSync}` : lastSync;
     return `
-      <div class="cloud-provider ${hasError ? "has-error" : ""}" data-provider-status="${providerName}" title="${escapeHtml(hasError ? `${provider.lastError} Last successful sync: ${lastSync}.` : `${automaticLabel}. ${lastSync}.`)}">
+      <div class="cloud-provider ${hasError ? "has-error" : ""}" data-provider-status="${providerName}" title="${escapeHtml(`${automaticLabel}. ${statusMessage}.`)}">
         ${providerIcon(providerName, 18)}
-        <span class="cloud-provider-copy"><strong>${escapeHtml(label)} <span class="auto-state ${connected ? "on" : ""}" aria-label="${automaticLabel}">${connected ? "Auto on" : "Auto off"}</span></strong><small>${escapeHtml(hasError ? `Needs attention · ${lastSync}` : lastSync)}</small></span>
+        <span class="cloud-provider-copy"><strong>${escapeHtml(label)} <span class="auto-state ${automatic ? "on" : ""}" aria-label="${automaticLabel}">${automatic ? "Auto on" : "Auto off"}</span></strong><small>${escapeHtml(statusMessage)}</small></span>
       </div>`;
   }
 
@@ -1616,12 +2004,9 @@
           ${icon("file", 19)}
           <span class="file-copy"><strong data-i18n-skip>${escapeHtml(file.name)}</strong><small>${file.id === state.workspace.activeFileId ? "Open now" : `Saved ${escapeHtml(formatUpdated(file.updatedAt))}`}</small></span>
         </button>
-        ${syncWarning ? `<span class="sync-warning" role="img" aria-label="${escapeHtml(syncWarning)}" title="${escapeHtml(syncWarning)}">${icon("alert", 17)}</span>` : ""}
+        ${syncWarning ? `<span class="sync-warning has-tooltip" role="img" tabindex="0" aria-label="${escapeHtml(syncWarning)}" data-tooltip="${escapeHtml(syncWarning)}">${icon("alert", 17)}</span>` : ""}
         <div class="row-actions">
-          <button class="row-action" type="button" data-action="copy-share-link" data-id="${escapeHtml(file.id)}" aria-label="Copy read-only share link for ${escapeHtml(file.name)}" title="Copy read-only share link">${icon("link", 16)}</button>
-          <button class="row-action" type="button" data-action="pin-file" data-id="${escapeHtml(file.id)}" aria-label="${pinned ? "Unpin" : "Pin"} ${escapeHtml(file.name)}">${icon("pin", 16)}</button>
-          <button class="row-action" type="button" data-action="file-more" data-id="${escapeHtml(file.id)}" aria-label="File actions for ${escapeHtml(file.name)}">${icon("more", 17)}</button>
-          <button class="row-action delete" type="button" data-action="delete" data-kind="file" data-id="${escapeHtml(file.id)}" aria-label="Delete ${escapeHtml(file.name)}">${icon("trash", 16)}</button>
+          <button class="row-action" type="button" data-action="file-more" data-id="${escapeHtml(file.id)}" aria-label="File actions for ${escapeHtml(file.name)}" aria-haspopup="menu" aria-expanded="false">${icon("more", 17)}</button>
         </div>
       </div>`;
   }
@@ -1631,45 +2016,56 @@
     const query = state.query.trim().toLocaleLowerCase();
     const matches = (name) => !query || name.toLocaleLowerCase().includes(query);
     const sortedFiles = ExcalidrawSyncCore.sortedFiles(state.workspace.files, state.workspace.sortMode);
+    const sortedFolders = ExcalidrawSyncCore.sortedFolders(state.workspace.folders, state.workspace.folderSortMode);
     const pinnedFiles = sortedFiles.filter((file) => file.pinned && matches(file.name));
-    const folders = state.workspace.folders.filter((folder) =>
+    const matchingFolderIds = new Set(sortedFolders.filter((folder) =>
       matches(folder.name) || sortedFiles.some((file) => file.folderId === folder.id && matches(file.name)),
-    );
+    ).map((folder) => folder.id));
+    const foldersById = new Map(sortedFolders.map((folder) => [folder.id, folder]));
+    for (const folderId of [...matchingFolderIds]) {
+      let parentId = foldersById.get(folderId)?.parentId;
+      while (parentId && !matchingFolderIds.has(parentId)) {
+        matchingFolderIds.add(parentId);
+        parentId = foldersById.get(parentId)?.parentId;
+      }
+    }
+    const folders = sortedFolders.filter((folder) => matchingFolderIds.has(folder.id));
+    const rootFolders = folders.filter((folder) => !folder.parentId || !foldersById.has(folder.parentId));
     const orphaned = sortedFiles.filter((file) => !state.workspace.folders.some((folder) => folder.id === file.folderId) && matches(file.name));
+    const renderFolder = (folder) => {
+      const folderFiles = sortedFiles.filter((file) => file.folderId === folder.id && matches(file.name));
+      const childFolders = folders.filter((candidate) => candidate.parentId === folder.id);
+      const collapsed = state.collapsedFolders.has(folder.id);
+      return `
+        <div class="folder ${collapsed ? "collapsed" : ""}" data-deletable data-kind="folder" data-id="${escapeHtml(folder.id)}" data-drop-folder="${escapeHtml(folder.id)}" draggable="true">
+          <div class="folder-head">
+            <button class="folder-toggle" type="button" data-action="toggle-folder" data-id="${escapeHtml(folder.id)}" aria-expanded="${String(!collapsed)}">
+              <span class="chevron">${icon("chevron", 16)}</span>${icon("folder", 18)}<span data-i18n-skip>${escapeHtml(folder.name)}</span>
+            </button>
+            <div class="row-actions">
+              <button class="row-action" type="button" data-action="folder-menu" data-id="${escapeHtml(folder.id)}" aria-label="Actions for ${escapeHtml(folder.name)}" aria-haspopup="menu" aria-expanded="false">${icon("more", 17)}</button>
+            </div>
+          </div>
+          <div class="folder-files">
+            ${folderFiles.map((file) => fileRow(file)).join("")}
+            ${childFolders.length ? `<div class="folder-children">${childFolders.map(renderFolder).join("")}</div>` : ""}
+            ${!folderFiles.length && !childFolders.length ? '<div class="empty">No files in this folder.</div>' : ""}
+          </div>
+        </div>`;
+    };
     return `
-      <div class="quick-grid">
+      <nav class="quick-grid" aria-label="File actions">
         <button class="quick-action" type="button" data-action="new-file">${icon("file", 19)}<span>New file</span></button>
-        <button class="quick-action" type="button" data-action="import">${icon("import", 19)}<span>Import</span></button>
         <button class="quick-action" type="button" data-action="new-folder">${icon("folder", 19)}<span>New folder</span></button>
         <button class="quick-action" type="button" data-action="manage">${icon("settings", 19)}<span>Manage</span></button>
-        <button class="quick-action" type="button" data-action="import-link">${icon("link", 19)}<span>Import link</span></button>
-      </div>
+      </nav>
       <div class="sync-row ${health.level === "ok" ? "" : health.level}">${icon(health.level === "stale" ? "alert" : "cloud", 18)}<span>${escapeHtml(healthMessage(health))}</span><button type="button" data-action="sync" aria-label="Sync all documents now" title="Sync all documents now">${icon("sync", 18)}</button></div>
       <div class="cloud-status" aria-label="Automatic cloud sync status">${providerHomeStatus()}</div>
-      <div class="search-wrap">${icon("search", 18)}<input class="search" type="search" placeholder="Search files and folders" value="${escapeHtml(state.query)}" aria-label="Search files and folders"></div>
       ${pinnedFiles.length ? `<section class="section pinned"><div class="section-title">${icon("pin", 15)} Pinned</div>${pinnedFiles.map((file) => fileRow(file, { pinned: true })).join("")}</section>` : ""}
+      <div class="search-wrap">${icon("search", 18)}<input class="search" type="search" placeholder="Search files and folders" value="${escapeHtml(state.query)}" aria-label="Search files and folders"></div>
       <section class="section">
-        <div class="section-title">Folders <span class="section-title-spacer"></span><button class="row-action" type="button" data-action="sort-files" aria-label="Sort files" title="Sort files">${icon("more", 17)}</button></div>
-        ${folders
-          .map((folder) => {
-            const folderFiles = sortedFiles.filter((file) => file.folderId === folder.id && matches(file.name));
-            const collapsed = state.collapsedFolders.has(folder.id);
-            return `
-              <div class="folder ${collapsed ? "collapsed" : ""}" data-deletable data-kind="folder" data-id="${escapeHtml(folder.id)}" data-drop-folder="${escapeHtml(folder.id)}">
-                <div class="folder-head">
-                  <button class="folder-toggle" type="button" data-action="toggle-folder" data-id="${escapeHtml(folder.id)}" aria-expanded="${String(!collapsed)}">
-                    <span class="chevron">${icon("chevron", 16)}</span>${icon("folder", 18)}<span data-i18n-skip>${escapeHtml(folder.name)}</span>
-                  </button>
-                  <div class="row-actions">
-                    <button class="row-action" type="button" data-action="folder-add" data-id="${escapeHtml(folder.id)}" aria-label="Add file to ${escapeHtml(folder.name)}">${icon("plus", 16)}</button>
-                    <button class="row-action" type="button" data-action="rename" data-kind="folder" data-id="${escapeHtml(folder.id)}" aria-label="Rename ${escapeHtml(folder.name)}">${icon("edit", 15)}</button>
-                    <button class="row-action delete" type="button" data-action="delete" data-kind="folder" data-id="${escapeHtml(folder.id)}" aria-label="Delete ${escapeHtml(folder.name)}">${icon("trash", 15)}</button>
-                  </div>
-                </div>
-                <div class="folder-files">${folderFiles.length ? folderFiles.map((file) => fileRow(file)).join("") : '<div class="empty">No files in this folder.</div>'}</div>
-              </div>`;
-          })
-          .join("")}
+        <div class="section-title" data-drop-root>Folders <span class="root-drop-hint">Drop here to move to top level</span><span class="section-title-spacer"></span><button class="row-action" type="button" data-action="folder-section-menu" aria-label="Folder section actions" title="Folder section actions" aria-haspopup="menu" aria-expanded="false">${icon("more", 17)}</button></div>
+        ${rootFolders.map(renderFolder).join("")}
         ${orphaned.length ? `<div class="folder"><div class="folder-head"><div class="folder-toggle">${icon("folder", 18)}<span>Unfiled</span></div></div><div class="folder-files">${orphaned.map((file) => fileRow(file)).join("")}</div></div>` : ""}
         ${!folders.length && !orphaned.length ? '<div class="empty">No matching files or folders.</div>' : ""}
       </section>`;
@@ -1682,12 +2078,15 @@
   function renderManageView() {
     const github = state.providers?.github;
     const drive = state.providers?.googleDrive;
+    const trashCount = ExcalidrawSyncCore.activeTrashItems(state.workspace).length;
+    const githubHasError = ExcalidrawSyncCore.hasActiveProviderError(github);
+    const driveHasError = ExcalidrawSyncCore.hasActiveProviderError(drive);
     const githubStatus = github?.connected
       ? github.account?.login || "Connected"
-      : github?.lastError ? "Needs attention" : "Not connected";
+      : githubHasError ? "Needs attention" : "Not connected";
     const driveStatus = drive?.connected
       ? drive.account?.email || "Connected"
-      : drive?.lastError ? "Needs attention" : "Not connected";
+      : driveHasError ? "Needs attention" : "Not connected";
     return `
       <div class="manage-title">
         <button class="icon-button" type="button" data-action="back" aria-label="Back to files">${icon("back", 19)}</button>
@@ -1698,9 +2097,10 @@
           <div class="settings-heading">${icon("settings", 17)}<div><strong>General</strong><small>Appearance and launcher</small></div></div>
           <div class="settings-grid">
             <label class="compact-field wide"><span>Language</span><select name="language">${ExcalidrawSyncI18n.SUPPORTED_LANGUAGES.map((language) => `<option value="${language}" ${state.language === language ? "selected" : ""}>${ExcalidrawSyncI18n.LANGUAGE_NAMES[language]}</option>`).join("")}</select></label>
-            <label class="compact-field wide"><span>Theme</span><select name="theme"><option value="system" ${state.theme === "system" ? "selected" : ""}>System</option><option value="light" ${state.theme === "light" ? "selected" : ""}>Light</option><option value="dark" ${state.theme === "dark" ? "selected" : ""}>Dark</option></select></label>
+            <label class="compact-field wide"><span>Theme</span><select name="theme"><option value="excalidraw" ${state.theme === "excalidraw" ? "selected" : ""}>Follow Excalidraw</option><option value="system" ${state.theme === "system" ? "selected" : ""}>System</option><option value="light" ${state.theme === "light" ? "selected" : ""}>Light</option><option value="dark" ${state.theme === "dark" ? "selected" : ""}>Dark</option></select></label>
           </div>
           <label class="toggle-row"><span class="toggle-copy"><strong>Floating launcher</strong><small>Show ExcaliSync on the canvas</small></span><input type="checkbox" name="launcherVisible" ${state.launcherVisible ? "checked" : ""}><span class="toggle-ui" aria-hidden="true"></span></label>
+          <label class="toggle-row"><span class="toggle-copy"><strong>Hide collapsed sidebar</strong><small>Open it from the ExcaliSync icon or browser extension button</small></span><input type="checkbox" name="sidebarRailHidden" ${state.sidebarRailHidden ? "checked" : ""}><span class="toggle-ui" aria-hidden="true"></span></label>
         </section>
 
         <section class="settings-card">
@@ -1708,6 +2108,7 @@
           <div class="settings-grid">
             <label class="compact-field"><span>Autosave</span><select name="saveMode"><option value="edit" ${state.saveSettings.mode === "edit" ? "selected" : ""}>After every edit</option><option value="interval" ${state.saveSettings.mode === "interval" ? "selected" : ""}>On a timer</option><option value="manual" ${state.saveSettings.mode === "manual" ? "selected" : ""}>Manual</option></select></label>
             <label class="compact-field"><span>Interval</span><select name="saveInterval" ${state.saveSettings.mode !== "interval" ? "disabled" : ""}><option value="5" ${state.saveSettings.intervalSeconds === 5 ? "selected" : ""}>5 seconds</option><option value="15" ${state.saveSettings.intervalSeconds === 15 ? "selected" : ""}>15 seconds</option><option value="30" ${state.saveSettings.intervalSeconds === 30 ? "selected" : ""}>30 seconds</option><option value="60" ${state.saveSettings.intervalSeconds === 60 ? "selected" : ""}>1 minute</option><option value="300" ${state.saveSettings.intervalSeconds === 300 ? "selected" : ""}>5 minutes</option></select></label>
+            <label class="compact-field wide"><span>Cloud sync after editing</span><select name="syncDelay"><option value="30" ${state.saveSettings.syncDelaySeconds === 30 ? "selected" : ""}>30 seconds</option><option value="60" ${state.saveSettings.syncDelaySeconds === 60 ? "selected" : ""}>1 minute</option><option value="300" ${state.saveSettings.syncDelaySeconds === 300 ? "selected" : ""}>5 minutes</option></select></label>
             <label class="compact-field wide"><span>Warn if pending</span><select name="staleMinutes"><option value="1" ${state.saveSettings.staleMinutes === 1 ? "selected" : ""}>After 1 minute</option><option value="5" ${state.saveSettings.staleMinutes === 5 ? "selected" : ""}>After 5 minutes</option><option value="10" ${state.saveSettings.staleMinutes === 10 ? "selected" : ""}>After 10 minutes</option><option value="30" ${state.saveSettings.staleMinutes === 30 ? "selected" : ""}>After 30 minutes</option></select></label>
           </div>
           <label class="toggle-row"><span class="toggle-copy"><strong>Notifications</strong><small>Show save and sync alerts</small></span><input type="checkbox" name="notificationsEnabled" ${state.saveSettings.notificationsEnabled ? "checked" : ""}><span class="toggle-ui" aria-hidden="true"></span></label>
@@ -1722,7 +2123,11 @@
 
         <section class="settings-card cloud-settings">
           <div class="settings-heading">${icon("cloud", 17)}<div><strong>Cloud sync</strong><small>Expand a provider to configure it</small></div></div>
-          <details class="provider-disclosure" ${github?.pendingAuth || github?.lastError ? "open" : ""}>
+          <div class="settings-grid">
+            <label class="compact-field wide"><span>Sync authority</span><select name="syncAuthority"><option value="local" ${state.providers?.syncAuthority === "local" ? "selected" : ""}>Local only</option><option value="github" ${state.providers?.syncAuthority === "github" ? "selected" : ""}>GitHub</option><option value="googleDrive" ${state.providers?.syncAuthority === "googleDrive" ? "selected" : ""}>Google Drive</option></select></label>
+          </div>
+          <p class="provider-note">Choose one cloud authority. Local storage remains the offline fallback; pending local changes merge when the selected provider is available again.</p>
+          <details class="provider-disclosure" ${github?.pendingAuth || githubHasError ? "open" : ""}>
             <summary>${providerIcon("github", 20)}<span class="provider-summary-copy"><strong>GitHub</strong><small>${escapeHtml(githubStatus)}</small></span><span class="badge ${github?.connected ? "connected" : ""}">${github?.connected ? "On" : "Off"}</span><span class="chevron">${icon("chevron", 15)}</span></summary>
             <div class="provider-config">
               <div class="settings-grid">
@@ -1732,13 +2137,13 @@
                 <label class="compact-field"><span>Root folder</span><input name="githubRoot" value="${escapeHtml(github?.config.rootDirectory || "Excalidraw")}"></label>
               </div>
               <p class="provider-note">Public client ID only. Device Flow is required; never enter a client secret.</p>
-              <details class="setup-guide"><summary>Create a GitHub OAuth App</summary><ol><li>Open GitHub Settings → Developer settings → OAuth Apps → <strong>New OAuth App</strong>.</li><li><strong>Application name:</strong> enter <code>ExcaliSync</code> (or another name you will recognize).</li><li><strong>Homepage URL:</strong> enter <code>https://excalidraw.com/</code>.</li><li><strong>Application description:</strong> optional; for example, <code>Sync Excalidraw drawings to my GitHub repository.</code></li><li><strong>Redirect URI:</strong> enter <code>https://excalidraw.com/</code>. GitHub requires this field, although ExcaliSync uses Device Flow and does not redirect to it.</li><li>Leave <strong>Allow wildcard matching</strong> off.</li><li>Turn <strong>Enable Device Flow</strong> on.</li><li>Turn <strong>Expire user access tokens</strong> off for this ExcaliSync version, which does not yet refresh an expired GitHub token.</li><li>Select <strong>Register application</strong>, then copy only the <strong>Client ID</strong> into ExcaliSync.</li><li>Do not generate, paste, or share a client secret. A client ID is public; access tokens remain in extension session storage.</li><li>On another machine, use the same GitHub account, Client ID, repository name, and root folder. The first sync downloads and merges the existing library.</li></ol></details>
+              <details class="setup-guide"><summary>Create a GitHub OAuth App</summary><ol><li>Open GitHub Settings → Developer settings → OAuth Apps → <strong>New OAuth App</strong>.</li><li><strong>Application name:</strong> enter <code>ExcaliSync</code> (or another name you will recognize).</li><li><strong>Homepage URL:</strong> enter <code>https://excalidraw.com/</code>.</li><li><strong>Application description:</strong> optional; for example, <code>Sync Excalidraw drawings to my GitHub repository.</code></li><li><strong>Redirect URI:</strong> enter <code>https://excalidraw.com/</code>. GitHub requires this field, although ExcaliSync uses Device Flow and does not redirect to it.</li><li>Leave <strong>Allow wildcard matching</strong> off.</li><li>Turn <strong>Enable Device Flow</strong> on.</li><li>Keep <strong>Expire user access tokens</strong> on. ExcaliSync securely rotates Device Flow access and refresh tokens when GitHub expires them.</li><li>Select <strong>Register application</strong>, then copy only the <strong>Client ID</strong> into ExcaliSync.</li><li>Do not generate, paste, or share a client secret. A client ID is public; access tokens remain in extension-owned storage and are never added to drawings, logs, or Git commits.</li><li>On another machine, use the same GitHub account, Client ID, repository name, and root folder. The first sync downloads and merges the existing library.</li></ol></details>
               ${github?.pendingAuth ? `<div class="device-code"><span>Enter this code on GitHub</span><strong>${escapeHtml(github.pendingAuth.userCode)}</strong><a class="text-link" href="${escapeHtml(github.pendingAuth.verificationUri)}" target="_blank" rel="noreferrer">Open GitHub ${icon("external", 12)}</a></div>` : ""}
               <div class="compact-actions"><button class="button primary" type="button" data-action="github-connect">${github?.connected ? "Reconnect" : "Connect"}</button>${github?.connected ? '<button class="button danger" type="button" data-action="disconnect" data-provider="github">Disconnect</button>' : ""}</div>
-              <p class="provider-note ${github?.lastError ? "error" : ""}">${github?.lastError ? escapeHtml(github.lastError) : github?.account ? `Signed in as ${escapeHtml(github.account.login)}. ${providerLink(github.repositoryUrl, "Repository")}` : "A private repository is created on first sync."}</p>
+              <p class="provider-note ${githubHasError ? "error" : ""}">${githubHasError ? escapeHtml(github.lastError) : github?.account ? `Signed in as ${escapeHtml(github.account.login)}. ${providerLink(github.repositoryUrl, "Repository")}` : "A private repository is created on first sync."}</p>
             </div>
           </details>
-          <details class="provider-disclosure" ${drive?.lastError ? "open" : ""}>
+          <details class="provider-disclosure" ${driveHasError ? "open" : ""}>
             <summary>${providerIcon("googleDrive", 20)}<span class="provider-summary-copy"><strong>Google Drive</strong><small>${escapeHtml(driveStatus)}</small></span><span class="badge ${drive?.connected ? "connected" : ""}">${drive?.connected ? "On" : "Off"}</span><span class="chevron">${icon("chevron", 15)}</span></summary>
             <div class="provider-config">
               <div class="settings-grid">
@@ -1749,12 +2154,129 @@
               <p class="provider-note">Use a browser-specific OAuth client ID. Never enter a client secret.</p>
               <details class="setup-guide"><summary>Create a Google OAuth client</summary><ol><li>Open Google Cloud Console and create or select a project.</li><li>Enable the Google Drive API.</li><li>Configure the OAuth consent screen and add yourself as a test user while the app is in testing.</li><li>Open Credentials → Create credentials → OAuth client ID → Chrome extension.</li><li>Enter this extension's ID from <strong>chrome://extensions</strong>, then copy the Client ID here.</li><li>No client secret belongs in this extension.</li><li>On another machine, use the same Google account, OAuth Client ID, and Drive folder name. The first sync downloads and merges the existing library.</li></ol></details>
               <div class="compact-actions"><button class="button primary" type="button" data-action="google-connect">${drive?.connected ? "Reconnect" : "Connect"}</button>${drive?.connected ? '<button class="button danger" type="button" data-action="disconnect" data-provider="googleDrive">Disconnect</button>' : ""}</div>
-              <p class="provider-note ${drive?.lastError ? "error" : ""}">${drive?.lastError ? escapeHtml(drive.lastError) : drive?.account ? `Signed in as ${escapeHtml(drive.account.email)}. ${providerLink(drive.folderUrl, "Drive folder")}` : "The folder stays private by default."}</p>
+              <p class="provider-note ${driveHasError ? "error" : ""}">${driveHasError ? escapeHtml(drive.lastError) : drive?.account ? `Signed in as ${escapeHtml(drive.account.email)}. ${providerLink(drive.folderUrl, "Drive folder")}` : "The folder stays private by default."}</p>
             </div>
           </details>
         </section>
-        <div class="settings-actions"><button class="button primary" type="submit">Save changes</button></div>
+        <section class="settings-card">
+          <div class="settings-heading">${icon("trash", 17)}<div><strong>Trash</strong><small>Recover items deleted during the last 30 days</small></div><span class="badge">${trashCount}</span></div>
+          <p class="storage-copy">Deleted files and folders stay hidden from your library while their backup remains recoverable for 30 days.</p>
+          <div class="compact-actions"><button class="button" type="button" data-action="open-trash">${icon("trash", 14)} Review Trash</button></div>
+        </section>
+        <p class="settings-auto-save" role="status" aria-live="polite">Changes save automatically</p>
       </form>`;
+  }
+
+  function renderTrashedFolderTree(item, daysRemaining) {
+    const folders = item.folders?.length
+      ? item.folders
+      : item.entry?.name
+        ? [item.entry]
+        : [];
+    const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+    const childrenByParent = new Map();
+    const filesByFolder = new Map();
+    const explicitlyRestoredFolders = new Set(folders
+      .filter((folder) => {
+        const marker = ExcalidrawSyncCore.trashChildRestoration(item, "folder", folder.id);
+        return marker && !marker.structural;
+      })
+      .map((folder) => folder.id));
+    const restoredFiles = new Set((item.files || [])
+      .filter((file) => ExcalidrawSyncCore.trashChildRestoration(item, "file", file.id))
+      .map((file) => file.id));
+
+    const belongsToRestoredSubtree = (folder) => {
+      const visited = new Set();
+      let current = folder;
+      while (current && !visited.has(current.id)) {
+        if (explicitlyRestoredFolders.has(current.id)) return true;
+        visited.add(current.id);
+        current = foldersById.get(current.parentId);
+      }
+      return false;
+    };
+    const visibleFolders = folders.filter((folder) => !belongsToRestoredSubtree(folder));
+    const visibleFolderIds = new Set(visibleFolders.map((folder) => folder.id));
+
+    for (const folder of visibleFolders) {
+      const parentId = visibleFolderIds.has(folder.parentId) ? folder.parentId : null;
+      if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+      childrenByParent.get(parentId).push(folder);
+    }
+    for (const file of item.files || []) {
+      if (restoredFiles.has(file.id) || !visibleFolderIds.has(file.folderId)) continue;
+      if (!filesByFolder.has(file.folderId)) filesByFolder.set(file.folderId, []);
+      filesByFolder.get(file.folderId).push(file);
+    }
+
+    const subtreeHasUnavailableFile = (folderId, visited = new Set()) => {
+      if (visited.has(folderId)) return false;
+      visited.add(folderId);
+      if ((filesByFolder.get(folderId) || []).some((file) => !file.scene)) return true;
+      return (childrenByParent.get(folderId) || [])
+        .some((folder) => subtreeHasUnavailableFile(folder.id, visited));
+    };
+    const renderFolder = (folder, ancestry = new Set()) => {
+      if (ancestry.has(folder.id)) return "";
+      const nextAncestry = new Set(ancestry).add(folder.id);
+      const childFolders = childrenByParent.get(folder.id) || [];
+      const files = filesByFolder.get(folder.id) || [];
+      const canRestore = !subtreeHasUnavailableFile(folder.id);
+      const childMarkup = [
+        ...childFolders.map((child) => renderFolder(child, nextAncestry)),
+        ...files.map((file) => {
+          const fileCanRestore = Boolean(file.scene);
+          return `<div class="trash-tree-row">
+            <span class="trash-item-icon">${icon("file", 14)}</span>
+            <span class="trash-item-copy"><strong data-i18n-skip>${escapeHtml(file.name || "Deleted file")}</strong><small>File</small></span>
+            <button class="button" type="button" data-action="restore-trash-file" data-trash-id="${escapeHtml(item.entry.id)}" data-id="${escapeHtml(file.id)}" ${fileCanRestore ? "" : "disabled"} title="${fileCanRestore ? "Restore file" : "Backup unavailable on this device"}">${icon("sync", 13)} Restore</button>
+          </div>`;
+        }),
+      ].join("");
+      return `<div class="trash-tree-node">
+        <div class="trash-tree-row">
+          <span class="trash-item-icon">${icon("folder", 14)}</span>
+          <span class="trash-item-copy"><strong data-i18n-skip>${escapeHtml(folder.name || "Deleted folder")}</strong><small>Folder</small></span>
+          <button class="button" type="button" data-action="restore-trash-folder" data-trash-id="${escapeHtml(item.entry.id)}" data-id="${escapeHtml(folder.id)}" ${canRestore ? "" : "disabled"} title="${canRestore ? "Restore folder" : "A file backup is unavailable on this device"}">${icon("sync", 13)} Restore</button>
+        </div>
+        ${childMarkup ? `<div class="trash-tree-children">${childMarkup}</div>` : ""}
+      </div>`;
+    };
+    const roots = childrenByParent.get(null) || [];
+    return `<article class="trash-item folder-backup">
+      <div class="trash-item-copy"><small>Deleted ${escapeHtml(formatRelativeTime(item.deletedAt))} · ${daysRemaining} day${daysRemaining === 1 ? "" : "s"} remaining</small></div>
+      <div class="trash-tree">${roots.map((folder) => renderFolder(folder)).join("")}</div>
+    </article>`;
+  }
+
+  function renderTrashView() {
+    const trash = ExcalidrawSyncCore.activeTrashItems(state.workspace);
+    return `
+      <div class="manage-title">
+        <button class="icon-button" type="button" data-action="back-manage" aria-label="Back to settings">${icon("back", 19)}</button>
+        <div><h2>Trash</h2><span class="settings-subtitle">Recover deleted items for up to 30 days</span></div>
+      </div>
+      <div class="trash-list">
+        ${trash.length ? trash.map((item) => {
+          const isFolder = item.kind === "folder";
+          const expiresAt = new Date(item.deletedAt).getTime() + ExcalidrawSyncCore.TRASH_RETENTION_MS;
+          const daysRemaining = Math.max(1, Math.ceil((expiresAt - Date.now()) / 86_400_000));
+          if (isFolder) return renderTrashedFolderTree(item, daysRemaining);
+          const canRestore = isFolder
+            ? Boolean(item.folders?.length || item.entry?.name)
+            : Boolean(item.entry?.scene);
+          const itemName = item.entry?.name || (isFolder ? "Deleted folder" : "Deleted file");
+          const contents = isFolder && item.files?.length
+            ? ` · ${item.files.length} file${item.files.length === 1 ? "" : "s"}`
+            : "";
+          return `<article class="trash-item">
+            <span class="trash-item-icon">${icon(isFolder ? "folder" : "file", 17)}</span>
+            <span class="trash-item-copy"><strong data-i18n-skip>${escapeHtml(itemName)}</strong><small>Deleted ${escapeHtml(formatRelativeTime(item.deletedAt))}${contents} · ${daysRemaining} day${daysRemaining === 1 ? "" : "s"} remaining</small></span>
+            <button class="button" type="button" data-action="restore-trash" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.entry.id)}" ${canRestore ? "" : "disabled"} title="${canRestore ? "Restore" : "Backup unavailable on this device"}">${icon("sync", 14)} Restore</button>
+          </article>`;
+        }).join("") : '<div class="empty">Trash is empty.</div>'}
+      </div>`;
   }
 
   function renderNotificationsView() {
@@ -1785,9 +2307,12 @@
     if (!state.workspace) {
       return;
     }
+    dismissActionDropdown();
     renderHeader();
     const markup = state.view === "manage"
       ? renderManageView()
+      : state.view === "trash"
+        ? renderTrashView()
       : state.view === "notifications"
         ? renderNotificationsView()
         : renderFilesView();
@@ -1799,11 +2324,94 @@
   }
 
   function bindFileDragHandlers() {
+    const clearFolderDragState = () => {
+      state.draggedFolderId = null;
+      elements.body.classList.remove("folder-dragging");
+      for (const target of elements.body.querySelectorAll(".drag-target, .nest-target, .dragging")) {
+        target.classList.remove("drag-target", "nest-target", "dragging");
+      }
+    };
+    for (const folder of elements.body.querySelectorAll(".folder[draggable='true']")) {
+      const head = folder.querySelector(":scope > .folder-head");
+      folder.addEventListener("dragstart", (event) => {
+        if (event.target.closest(".file-row")) return;
+        state.draggedFolderId = folder.dataset.id;
+        elements.body.classList.add("folder-dragging");
+        folder.classList.add("dragging");
+        event.dataTransfer?.setData("text/plain", folder.dataset.id);
+        event.stopPropagation();
+      });
+      folder.addEventListener("dragend", () => {
+        if (state.draggedFolderId !== folder.dataset.id) return;
+        clearFolderDragState();
+      });
+      head?.addEventListener("dragover", (event) => {
+        if (!state.draggedFolderId || state.draggedFolderId === folder.dataset.id) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const dropMode = ExcalidrawSyncUIEvents.folderDropMode(event.clientY, head.getBoundingClientRect());
+        folder.classList.add("drag-target");
+        folder.classList.toggle("nest-target", dropMode === "inside");
+      });
+      head?.addEventListener("dragleave", (event) => {
+        if (!head.contains(event.relatedTarget)) folder.classList.remove("drag-target", "nest-target");
+      });
+      head?.addEventListener("drop", async (event) => {
+        if (!state.draggedFolderId || state.draggedFolderId === folder.dataset.id) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const dropMode = ExcalidrawSyncUIEvents.folderDropMode(event.clientY, head.getBoundingClientRect());
+        if (dropMode === "inside") {
+          state.workspace = ExcalidrawSyncCore.moveFolderToParent(
+            state.workspace,
+            state.draggedFolderId,
+            folder.dataset.id,
+          );
+          state.collapsedFolders.delete(folder.dataset.id);
+        } else {
+          const workspaceInDisplayedOrder = {
+            ...state.workspace,
+            folders: ExcalidrawSyncCore.sortedFolders(state.workspace.folders, state.workspace.folderSortMode),
+          };
+          state.workspace = ExcalidrawSyncCore.moveFolder(
+            workspaceInDisplayedOrder,
+            state.draggedFolderId,
+            folder.dataset.id,
+            dropMode,
+          );
+        }
+        clearFolderDragState();
+        await persistWorkspace();
+        render();
+      });
+    }
+    const rootDropTarget = elements.body.querySelector("[data-drop-root]");
+    rootDropTarget?.addEventListener("dragover", (event) => {
+      const draggedFolder = state.workspace.folders.find((folder) => folder.id === state.draggedFolderId);
+      if (!draggedFolder?.parentId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      rootDropTarget.classList.add("drag-target");
+    });
+    rootDropTarget?.addEventListener("dragleave", (event) => {
+      if (!rootDropTarget.contains(event.relatedTarget)) rootDropTarget.classList.remove("drag-target");
+    });
+    rootDropTarget?.addEventListener("drop", async (event) => {
+      const draggedFolder = state.workspace.folders.find((folder) => folder.id === state.draggedFolderId);
+      if (!draggedFolder?.parentId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      state.workspace = ExcalidrawSyncCore.moveFolderToParent(state.workspace, state.draggedFolderId, null);
+      clearFolderDragState();
+      await persistWorkspace();
+      render();
+    });
     for (const row of elements.body.querySelectorAll(".file-row[draggable='true']")) {
       row.addEventListener("dragstart", (event) => {
         state.draggedFileId = row.dataset.id;
         row.classList.add("dragging");
         event.dataTransfer?.setData("text/plain", row.dataset.id);
+        event.stopPropagation();
       });
       row.addEventListener("dragend", () => {
         state.draggedFileId = null;
@@ -1818,7 +2426,9 @@
       });
       target.addEventListener("dragleave", () => target.classList.remove("drag-target"));
       target.addEventListener("drop", async (event) => {
+        if (!state.draggedFileId) return;
         event.preventDefault();
+        event.stopPropagation();
         const fileId = state.draggedFileId || event.dataTransfer?.getData("text/plain");
         const targetFile = target.matches(".file-row")
           ? state.workspace.files.find((file) => file.id === target.dataset.id)
@@ -1887,15 +2497,19 @@
     await storageSet(THEME_KEY, state.theme);
     applyLauncherVisibility(data.launcherVisible === "on");
     await storageSet(LAUNCHER_VISIBLE_KEY, state.launcherVisible);
+    applySidebarRailVisibility(data.sidebarRailHidden === "on");
+    await storageSet(SIDEBAR_RAIL_HIDDEN_KEY, state.sidebarRailHidden);
     state.saveSettings = ExcalidrawSyncUIEvents.normalizeSaveSettings({
       mode: data.saveMode,
       intervalSeconds: data.saveInterval || state.saveSettings.intervalSeconds,
+      syncDelaySeconds: data.syncDelay || state.saveSettings.syncDelaySeconds,
       staleMinutes: data.staleMinutes,
       notificationsEnabled: data.notificationsEnabled === "on",
     });
     await storageSet(SAVE_SETTINGS_KEY, state.saveSettings);
     state.providers = await sendMessage({
       type: "providers:save",
+      syncAuthority: data.syncAuthority,
       github: {
         clientId: data.githubClientId,
         repoName: data.githubRepoName,
@@ -1908,6 +2522,38 @@
         visibility: data.googleVisibility,
       },
     });
+  }
+
+  function setSettingsAutoSaveStatus(message, status = "") {
+    const indicator = elements.body.querySelector(".settings-auto-save");
+    if (!indicator) return;
+    indicator.textContent = t(message);
+    indicator.dataset.state = status;
+  }
+
+  function scheduleSettingsSave(formData, delayMs = 450) {
+    if (!formData) return;
+    clearTimeout(settingsSaveTimer);
+    setSettingsAutoSaveStatus("Saving changes…", "saving");
+    settingsSaveTimer = setTimeout(() => {
+      settingsSaveTimer = null;
+      settingsSaveQueue = settingsSaveQueue
+        .catch(() => {})
+        .then(async () => {
+          try {
+            await saveProviderForm(formData);
+            setSettingsAutoSaveStatus("Settings saved automatically", "saved");
+            if (hasConnectedCloud()) scheduleCloudSync();
+          } catch (error) {
+            if (ExcalidrawSyncUIEvents.isExtensionContextInvalidated(error)) {
+              await recoverInvalidatedContext(error, { providerFormDraft: formData });
+              return;
+            }
+            setSettingsAutoSaveStatus("Could not save settings automatically", "error");
+            showToast(error.message, "error");
+          }
+        });
+    }, delayMs);
   }
 
   async function connectGitHub() {
@@ -1941,6 +2587,7 @@
           return;
         }
         state.providers.github = result.provider;
+        state.providers.syncAuthority = "github";
         showToast(`Connected to GitHub as ${result.provider.account.login}.`);
         render();
         syncNow({ quiet: true });
@@ -1955,6 +2602,7 @@
     try {
       await saveProviderForm();
       state.providers.googleDrive = await sendMessage({ type: "google:connect" });
+      state.providers.syncAuthority = "googleDrive";
       showToast(`Connected to Google Drive as ${state.providers.googleDrive.account.email}.`);
       render();
       syncNow({ quiet: true });
@@ -1969,7 +2617,9 @@
   elements.filePicker.addEventListener("change", async () => {
     const files = [...elements.filePicker.files];
     elements.filePicker.value = "";
-    await importFiles(files);
+    const targetFolderId = state.importFolderId;
+    state.importFolderId = null;
+    await importFiles(files, targetFolderId);
   });
 
   elements.panel.addEventListener("input", (event) => {
@@ -1980,21 +2630,21 @@
       const search = elements.body.querySelector(".search");
       search.focus();
       search.setSelectionRange(position, position);
+      return;
+    }
+    if (event.target.closest(".providers-form") && event.target.matches("input:not([type='checkbox'])")) {
+      scheduleSettingsSave(readProviderForm());
     }
   });
 
   elements.panel.addEventListener("change", (event) => {
+    const settingsDraft = event.target.closest(".providers-form") ? readProviderForm() : null;
     if (event.target.matches("select[name='language']")) {
       applyLanguage(event.target.value);
-      void storageSet(LANGUAGE_KEY, state.language).then(() => render()).catch(() => {
-        showToast("Could not remember the language setting.", "error");
-      });
+      render();
     }
     if (event.target.matches("select[name='theme']")) {
       applyTheme(event.target.value);
-      void storageSet(THEME_KEY, state.theme).catch(() => {
-        showToast("Could not remember the theme setting.", "error");
-      });
     }
     if (event.target.matches("select[name='saveMode']")) {
       const interval = elements.body.querySelector("select[name='saveInterval']");
@@ -2002,31 +2652,26 @@
     }
     if (event.target.matches("input[name='launcherVisible']")) {
       applyLauncherVisibility(event.target.checked);
-      void storageSet(LAUNCHER_VISIBLE_KEY, state.launcherVisible).catch((error) => {
-        if (ExcalidrawSyncUIEvents.isExtensionContextInvalidated(error)) {
-          void recoverInvalidatedContext();
-        } else {
-          showToast("Could not remember the launcher setting.", "error");
-        }
-      });
     }
+    if (event.target.matches("input[name='sidebarRailHidden']")) {
+      applySidebarRailVisibility(event.target.checked);
+    }
+    if (settingsDraft) scheduleSettingsSave(settingsDraft, 0);
   });
 
-  elements.panel.addEventListener("submit", async (event) => {
+  elements.panel.addEventListener("submit", (event) => {
     if (!event.target.matches(".providers-form")) {
       return;
     }
     event.preventDefault();
-    try {
-      await saveProviderForm();
-      showToast("Sync settings saved.");
-      render();
-    } catch (error) {
-      showToast(error.message, "error");
-    }
+    scheduleSettingsSave(readProviderForm(), 0);
   });
 
   elements.panel.addEventListener("click", async (event) => {
+    if (!state.open) {
+      setOpen(true, { home: true, acknowledge: true });
+      return;
+    }
     const button = event.target.closest("[data-action]");
     if (!button) {
       return;
@@ -2035,11 +2680,19 @@
     try {
       await ExcalidrawSyncUIEvents.runWithInvalidationRecovery(async () => {
         if (action === "close") setOpen(false);
+        if (action === "toggle-sidebar") setOpen(!state.open, { home: !state.open, acknowledge: !state.open });
         if (action === "new-file") await createFile();
         if (action === "new-folder") await createFolder();
-        if (action === "import") elements.filePicker.click();
+        if (action === "import") { state.importFolderId = null; elements.filePicker.click(); }
         if (action === "import-link") await importSharedLink();
+        if (action === "folder-section-menu") await openFolderSectionMenu(button);
+        if (action === "folder-menu") await openFolderMenu(button.dataset.id, button);
         if (action === "manage") { state.view = "manage"; render(); }
+        if (action === "open-trash") { state.view = "trash"; render(); }
+        if (action === "back-manage") { state.view = "manage"; render(); }
+        if (action === "restore-trash") await restoreTrashItem(button.dataset.kind, button.dataset.id);
+        if (action === "restore-trash-file") await restoreTrashedFileItem(button.dataset.trashId, button.dataset.id);
+        if (action === "restore-trash-folder") await restoreTrashedFolderItem(button.dataset.trashId, button.dataset.id);
         if (action === "notifications") { state.view = "notifications"; markNotificationsRead(); render(); }
         if (action === "back") { state.view = "files"; render(); }
         if (action === "clear-notifications") { state.notifications = []; persistNotifications(); render(); }
@@ -2058,27 +2711,7 @@
         if (action === "rename") await renameEntry(button.dataset.kind, button.dataset.id);
         if (action === "copy-share-link") await copyShareLink(button.dataset.id);
         if (action === "sort-files") await chooseSortMode();
-        if (action === "file-more") {
-          const file = state.workspace.files.find((item) => item.id === button.dataset.id);
-          const result = await showFormDialog({
-            title: "File details",
-            fields: [
-              { name: "name", label: "File name", value: file.name, required: true },
-              {
-                name: "folderId", label: "Folder", type: "select", value: file.folderId,
-                options: state.workspace.folders.map((folder) => ({ value: folder.id, label: folder.name })),
-              },
-            ],
-            confirmLabel: "Save",
-          });
-          if (result) {
-            file.name = result.name.trim() || file.name;
-            file.folderId = result.folderId;
-            file.updatedAt = ExcalidrawSyncCore.nowIso();
-            await persistWorkspace();
-            render();
-          }
-        }
+        if (action === "file-more") await openFileMenu(button.dataset.id, button);
         if (action === "sync") await syncNow();
         if (action === "open-vault") {
           try {
@@ -2102,7 +2735,16 @@
     }
   });
 
-  document.addEventListener("keydown", (event) => {
+  document.addEventListener("keydown", async (event) => {
+    if (ExcalidrawSyncUIEvents.isSaveShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      await ExcalidrawSyncUIEvents.runWithInvalidationRecovery(
+        async () => { await syncNow(); },
+        recoverInvalidatedContext,
+      );
+      return;
+    }
     if (event.key === "Escape" && state.open && !elements.modalRoot.children.length) {
       setOpen(false);
     }
@@ -2135,7 +2777,10 @@
       return;
     }
     try {
-      await captureAndSaveActive();
+      await ExcalidrawSyncUIEvents.runWithInvalidationRecovery(
+        () => captureAndSaveActive(),
+        recoverInvalidatedContext,
+      );
     } catch (error) {
       addNotification("error", "Autosave needs attention", error.message);
       updateSaveIndicators();
@@ -2155,11 +2800,12 @@
         sessionStorage.removeItem(CONTEXT_RECOVERY_KEY);
         sessionStorage.removeItem(DURABLE_RESTORE_NOTICE_KEY);
       }
-      const [stored, durableBackup, savedLauncherPosition, savedLauncherVisible, launcherIntroduced, savedTheme, savedLanguage, savedSettings, savedState, openRequested, savedNotifications, nativeStatus] = await Promise.all([
+      const [stored, durableBackup, savedLauncherPosition, savedLauncherVisible, savedSidebarRailHidden, launcherIntroduced, savedTheme, savedLanguage, savedSettings, savedState, openRequested, savedNotifications, nativeStatus] = await Promise.all([
         storageGet(WORKSPACE_KEY),
         readDurableWorkspaceBackup().catch(() => null),
         storageGet(LAUNCHER_POSITION_KEY),
         storageGet(LAUNCHER_VISIBLE_KEY),
+        storageGet(SIDEBAR_RAIL_HIDDEN_KEY),
         storageGet(LAUNCHER_INTRODUCED_KEY),
         storageGet(THEME_KEY),
         storageGet(LANGUAGE_KEY),
@@ -2169,13 +2815,18 @@
         storageGet(NOTIFICATIONS_KEY),
         sendMessage({ type: "native:status" }).catch(() => null),
       ]);
-      state.notifications = Array.isArray(savedNotifications) ? savedNotifications : [];
+      const notificationHistory = Array.isArray(savedNotifications) ? savedNotifications : [];
+      state.notifications = notificationHistory.filter(
+        (item) => !ExcalidrawSyncUIEvents.isExtensionContextInvalidated(item?.message),
+      );
+      if (state.notifications.length !== notificationHistory.length) persistNotifications();
       state.nativeStorage = nativeStatus
         ? { available: true, root: nativeStatus.root }
         : { available: false, root: "~/.excalidraw-sync" };
       state.launcherIntroduced = launcherIntroduced !== false;
-      applyLauncherPosition(savedLauncherPosition || state.launcherPosition);
+      applyLauncherPosition(startupLauncherPosition(savedLauncherPosition));
       applyLauncherVisibility(savedLauncherVisible !== false);
+      applySidebarRailVisibility(savedSidebarRailHidden === true);
       applyLanguage(savedLanguage || state.language);
       applyTheme(savedTheme);
       state.saveSettings = ExcalidrawSyncUIEvents.normalizeSaveSettings(savedSettings);
@@ -2185,7 +2836,9 @@
         durable: durableBackup || nativeStatus?.workspace,
       });
       const restoredFromDurable = !recovery && !stored && Boolean(durableBackup || nativeStatus?.workspace);
-      state.workspace = ExcalidrawSyncCore.normalizeWorkspace(workspaceSource);
+      state.workspace = ExcalidrawSyncCore.purgeExpiredTrash(
+        ExcalidrawSyncCore.normalizeWorkspace(workspaceSource),
+      );
       state.lastSavedAt = recovery?.lastSavedAt || savedState?.lastSavedAt || (workspaceSource ? state.workspace.updatedAt : null);
       state.lastSyncedAt = recovery?.lastSyncedAt || savedState?.lastSyncedAt || null;
       state.unsyncedSince = recovery?.unsyncedSince || savedState?.unsyncedSince || null;

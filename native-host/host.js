@@ -77,6 +77,7 @@ function syncWorkspace(workspace) {
     files.push({ id: file.id, folderId: file.folderId || null, name: file.name, path: path.relative(VAULT_ROOT, filePath), updatedAt: file.updatedAt });
   }
   for (const item of workspace.trash || []) {
+    if (item.restoredAt) continue;
     const base = trashPath(item);
     if (item.kind === "file") {
       writeJson(`${base}.excalidraw`, item.entry.scene);

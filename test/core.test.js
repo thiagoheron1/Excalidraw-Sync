@@ -43,6 +43,31 @@ test("provider files mirror workspace folders with unique safe paths", () => {
   assert.equal(files.at(-1).path, "team-drawings/.excalidraw-sync.json");
 });
 
+test("nested folders persist and produce matching cloud paths", () => {
+  const workspace = core.createWorkspace("Architecture");
+  const parent = workspace.folders[0];
+  parent.name = "Personal";
+  const child = {
+    id: "folder-child",
+    parentId: parent.id,
+    name: "Ideas",
+    createdAt: parent.createdAt,
+    updatedAt: parent.updatedAt,
+  };
+  workspace.folders.push(child);
+  workspace.files[0].folderId = child.id;
+  workspace.files[0].name = "bbbbbb";
+
+  const files = core.buildProviderFiles(workspace, "Excalidraw");
+  assert.equal(files[0].path, "excalidraw/personal/ideas/bbbbbb.excalidraw");
+  const index = JSON.parse(files.find((file) => file.id === "workspace-index").content);
+  assert.equal(index.folders.find((folder) => folder.id === child.id).parentId, parent.id);
+
+  const deleted = core.trashEntry(workspace, "folder", parent.id, "2026-10-07T12:00:00.000Z");
+  assert.equal(deleted.folders.length, 0);
+  assert.equal(deleted.files.length, 0);
+});
+
 test("the always-on local vault mirrors drawings under a hidden logical root", () => {
   const workspace = core.createWorkspace("Architecture");
   workspace.folders[0].name = "Work";
