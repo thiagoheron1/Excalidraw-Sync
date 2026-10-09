@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const core = require("../shared/core.js");
+const { isExtensionContextInvalidated, requireActionResult } = require("../shared/ui-events.js");
 
 const background = fs.readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
 const content = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
@@ -35,6 +36,53 @@ test("force push requires typed confirmation and intentionally skips the remote 
   assert.match(content, /confirmed\.confirmation\.trim\(\)\.toLowerCase\(\) !== "force push"/);
   assert.match(content, /type: "github:push", workspace: state\.workspace, force/);
   assert.match(background, /force \? "force-push" : "merge"/);
+});
+
+test("manual GitHub push confirms before overwriting repository drawings", () => {
+  const pushStart = content.indexOf("async function pushToGitHub");
+  const pushEnd = content.indexOf("async function squashGitHubHistory", pushStart);
+  const push = content.slice(pushStart, pushEnd);
+
+  assert.match(push, /title: "Push to GitHub\?"/);
+  assert.match(push, /can overwrite changed drawing files/);
+  assert.match(push, /confirmLabel: "Push and overwrite"/);
+  assert.ok(push.indexOf("showFormDialog") < push.indexOf('type: "github:push"'));
+});
+
+test("GitHub history squash requires typed confirmation and creates a root commit", () => {
+  assert.match(content, /data-action="github-squash"/);
+  assert.match(content, /label: 'Type "squash" to confirm'/);
+  assert.match(content, /confirmation\.trim\(\)\.toLowerCase\(\) !== "squash"/);
+  assert.match(content, /type: "github:squash"/);
+  assert.match(background, /message: "ExcaliSync squashed workspace"[\s\S]*parents: \[\]/);
+  assert.match(background, /updateGitHubReference\(owner, repo, branch, token, squashedCommit\.sha, reference\)/);
+});
+
+test("an empty squash response becomes an actionable recovery error instead of a null providers crash", () => {
+  let error;
+  try {
+    requireActionResult(null, ["providers", "branch"], "Squash GitHub history");
+  } catch (caught) {
+    error = caught;
+  }
+  assert.ok(error);
+  assert.match(error.message, /Reload the extension and refresh Excalidraw/);
+  assert.equal(isExtensionContextInvalidated(error), true);
+  assert.match(content, /requireActionResult\(response, \["providers", "branch"\], "Squash GitHub history"\)/);
+});
+
+test("read-only link creation activates Excalidraw export and falls back when Clipboard API rejects", () => {
+  const manifest = fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8");
+  assert.match(content, /readOnlyLinkAction/);
+  assert.match(content, /await ExcalidrawSyncUIEvents\.copyTextToClipboard\(link/);
+  assert.match(manifest, /clipboardWrite/);
+});
+
+test("GitHub home card opens and scrolls to expanded settings", () => {
+  assert.match(content, /data-action="open-github-settings"/);
+  assert.match(content, /data-provider-settings="github"/);
+  assert.match(content, /githubSettings\.open = true/);
+  assert.match(content, /githubSettings\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
 });
 
 test("two-machine reconciliation keeps the selected side authoritative", () => {

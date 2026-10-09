@@ -15,6 +15,12 @@ test("reopening the sidebar from Manage or Notifications always returns to Files
   assert.match(content, /setOpen\(opening, \{ home: opening, acknowledge: opening \}\)/);
 });
 
+test("clicking the ExcaliSync icon or title in the header returns to Home", () => {
+  assert.match(content, /class="brand-home"[^>]*data-action="home"/);
+  assert.match(content, /aria-label="Go to ExcaliSync home"/);
+  assert.match(content, /if \(action === "home"\) \{ state\.view = "files"; render\(\); \}/);
+});
+
 test("the sidebar starts as a collapsed left rail and has an expand-collapse control", () => {
   assert.match(content, /class="panel collapsed"/);
   assert.match(content, /data-action="toggle-sidebar"/);

@@ -6,7 +6,9 @@ const { JSDOM } = require("jsdom");
 const {
   attachDraggableLauncher,
   clampLauncherPosition,
+  launcherPositionBesideSidebar,
   positionLauncherElement,
+  rightAnchoredLauncherPosition,
 } = require("../shared/ui-events.js");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -31,6 +33,39 @@ test("launcher position is constrained to the visible viewport", () => {
 test("the default top-right launcher sits below Excalidraw controls", () => {
   assert.match(content, /\.launcher \{\s*position: fixed; right: 12px; top: 70px;/);
   assert.match(content, /\{ x: window\.innerWidth - size\.width - 12, y: 70 \}/);
+});
+
+test("opening the sidebar does not hide the ExcaliSync launcher", () => {
+  const setOpenSource = content.slice(
+    content.indexOf("function setOpen("),
+    content.indexOf("function applyTheme("),
+  );
+
+  assert.doesNotMatch(setOpenSource, /launcher\.classList\.toggle\("is-hidden", open\)/);
+});
+
+test("opening the sidebar moves a covered launcher to the safe top-right area", () => {
+  assert.deepEqual(
+    launcherPositionBesideSidebar(
+      { x: 223, y: 13 },
+      {
+        open: true,
+        sidebarWidth: 392,
+        viewport: { width: 1040, height: 912 },
+        launcherSize: { width: 64, height: 62 },
+      },
+    ),
+    { position: { x: 964, y: 70 }, moved: true },
+  );
+});
+
+test("a right-anchored launcher follows the viewport edge after resize", () => {
+  assert.deepEqual(
+    rightAnchoredLauncherPosition({ y: 70 }, { width: 1440, height: 900 }, { width: 64, height: 62 }),
+    { x: 1364, y: 70 },
+  );
+  assert.match(content, /savedPosition\.anchor === "right"/);
+  assert.match(content, /state\.launcherAnchoredRight \? anchoredLauncherPosition\(\) : launcherDrag\.constrain/);
 });
 
 test("positioning the launcher cannot stretch it between left and right offsets", () => {

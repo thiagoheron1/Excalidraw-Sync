@@ -70,6 +70,39 @@ test("settings use compact groups and collapsible cloud providers without duplic
   assert.doesNotMatch(manageView, /Sync all now/);
   assert.doesNotMatch(manageView, />Save changes<\/button>/);
   assert.match(manageView, /class="settings-auto-save" role="status"/);
+  assert.match(manageView, /class="settings-hero"/);
+  assert.match(manageView, /class="settings-nav" aria-label="Settings sections"/);
+  assert.match(manageView, /data-action="settings-jump"/);
+  assert.match(manageView, /id="settings-general"/);
+  assert.match(manageView, /id="settings-github"/);
+});
+
+test("settings navigation behaves as tabs and renders only the selected panel", () => {
+  const start = content.indexOf("function renderManageView");
+  const end = content.indexOf("function renderTrashedFolderTree", start);
+  const manageView = content.slice(start, end);
+
+  assert.match(manageView, /role="tablist"/);
+  assert.match(manageView, /role="tab"[^>]*aria-selected=/);
+  assert.match(manageView, /role="tabpanel"/);
+  assert.match(manageView, /state\.settingsTab === "general" \? "" : "hidden"/);
+  assert.match(content, /state\.settingsTab = button\.dataset\.tab/);
+  assert.match(content, /state\.settingsTab = "github";[\s\S]*state\.view = "manage"/);
+});
+
+test("Saving and local disk controls share the single Storage tab", () => {
+  const start = content.indexOf("function renderManageView");
+  const end = content.indexOf("function renderTrashedFolderTree", start);
+  const manageView = content.slice(start, end);
+  const storageStart = manageView.indexOf('id="settings-storage"');
+  const storageEnd = manageView.indexOf('id="settings-github"', storageStart);
+  const storagePanel = manageView.slice(storageStart, storageEnd);
+
+  assert.doesNotMatch(manageView, /data-tab="saving"/);
+  assert.doesNotMatch(manageView, /id="settings-saving"/);
+  assert.match(storagePanel, /<strong>Saving<\/strong>/);
+  assert.match(storagePanel, /<strong>Local storage<\/strong>/);
+  assert.match(content, /state\.settingsTab === "saving"\) state\.settingsTab = "storage"/);
 });
 
 test("settings save automatically after selects, toggles, and debounced text edits", () => {

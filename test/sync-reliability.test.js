@@ -152,9 +152,12 @@ test("every three-dot control opens an anchored dropdown instead of an action di
   assert.match(content, /openFileMenu\(button\.dataset\.id, button\)/);
 });
 
-test("file details lists the folder before the file name", () => {
-  const start = content.indexOf('title: "File details"');
+test("Rename File lists the folder first and selects the filename on open", () => {
+  const start = content.indexOf('title: "Rename File"');
   const end = content.indexOf('confirmLabel: "Save"', start);
   const fields = content.slice(start, end);
+  assert.ok(start >= 0);
   assert.ok(fields.indexOf('label: "Folder"') < fields.indexOf('label: "File name"'));
+  assert.match(fields, /autoSelectName: "name"/);
+  assert.match(content, /value: "details", label: "Rename File"/);
 });

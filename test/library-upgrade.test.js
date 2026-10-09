@@ -79,6 +79,10 @@ test("settings exposes a 30-day Trash view with recovery actions", () => {
   assert.match(content, /data-action="restore-trash"/);
   assert.match(content, /ExcalidrawSyncCore\.restoreTrashEntry/);
   assert.match(content, /state\.view === "trash"/);
+  assert.match(content, /native:readTrashBackup/);
+  assert.doesNotMatch(content, /data-action="restore-trash"[^>]*disabled/);
+  assert.doesNotMatch(content, /data-action="restore-trash-file"[^>]*disabled/);
+  assert.doesNotMatch(content, /data-action="restore-trash-folder"[^>]*disabled/);
 });
 
 test("new file and folder dialogs start empty and use descriptive placeholders", () => {
@@ -86,6 +90,16 @@ test("new file and folder dialogs start empty and use descriptive placeholders",
   assert.match(content, /label: "Folder name", value: "", placeholder: "New Folder"/);
   assert.match(content, /field\.placeholder/);
   assert.doesNotMatch(content, /label: "Folder name", value: "New folder"/);
+});
+
+test("new file dialog shows Folder first but selects the filename input on open", () => {
+  const start = content.indexOf('title: "New file"');
+  const end = content.indexOf('confirmLabel: "Create file"', start);
+  const dialog = content.slice(start, end);
+
+  assert.ok(start >= 0);
+  assert.ok(dialog.indexOf('label: "Folder"') < dialog.indexOf('label: "File name"'));
+  assert.match(dialog, /autoSelectName: "name"/);
 });
 
 test("Trash is the final settings section after cloud sync", () => {
@@ -132,6 +146,33 @@ test("rich local Trash metadata survives a cloud tombstone with only an id", () 
 
   assert.equal(mergedTrash.entry.name, folder.name);
   assert.equal(mergedTrash.files[0].name, workspace.files[0].name);
+});
+
+test("cloud Trash metadata never replaces the recoverable local scene or blocks Restore", () => {
+  const workspace = core.createWorkspace();
+  const folder = workspace.folders[0];
+  const file = structuredClone(workspace.files[0]);
+  const trashed = core.trashEntry(workspace, "folder", folder.id, "2026-10-07T12:00:00.000Z");
+  const metadataOnly = core.workspaceFromProviderIndex({
+    workspaceId: trashed.id,
+    generatedAt: "2026-10-07T12:00:00.000Z",
+    tombstones: [{
+      kind: "folder",
+      id: folder.id,
+      deletedAt: "2026-10-07T12:00:00.000Z",
+      entry: { id: folder.id, name: folder.name },
+      folders: trashed.trash[0].folders.map(({ scene: _scene, ...entry }) => entry),
+      files: trashed.trash[0].files.map(({ scene: _scene, ...entry }) => entry),
+    }],
+  });
+
+  for (const [left, right] of [[trashed, metadataOnly], [metadataOnly, trashed]]) {
+    const merged = core.mergeWorkspaces(left, right);
+    const mergedTrash = core.activeTrashItems(merged)[0];
+    assert.deepEqual(mergedTrash.files[0].scene, file.scene);
+    const restored = core.restoreTrashEntry(merged, "folder", folder.id, "2026-10-07T13:00:00.000Z");
+    assert.deepEqual(restored.files.find((entry) => entry.id === file.id)?.scene, file.scene);
+  }
 });
 
 test("a file can be restored from a trashed folder without restoring its siblings", () => {

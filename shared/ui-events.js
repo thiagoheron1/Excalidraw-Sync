@@ -77,6 +77,24 @@
     return visible && introduced === false;
   }
 
+  function launcherPositionBesideSidebar(
+    position,
+    { open = false, sidebarWidth = 0, viewport, launcherSize, minimumTop = 70 } = {},
+  ) {
+    const constrained = clampLauncherPosition(position, viewport, launcherSize);
+    if (!open || constrained.x >= Math.max(0, Number(sidebarWidth) || 0) + 8) {
+      return { position: constrained, moved: false };
+    }
+    return {
+      position: rightAnchoredLauncherPosition(
+        { y: Math.max(minimumTop, constrained.y) },
+        viewport,
+        launcherSize,
+      ),
+      moved: true,
+    };
+  }
+
   function workspaceForRecovery({ recovery = null, stored = null, durable = null } = {}) {
     return recovery?.workspace || stored || durable || null;
   }
@@ -242,7 +260,7 @@
   }
 
   function isExtensionContextInvalidated(error) {
-    return /extension context invalidated/i.test(String(error?.message || error || ""));
+    return /extension context invalidated|could not reach the updated background service/i.test(String(error?.message || error || ""));
   }
 
   function isSaveShortcut(event = {}) {
@@ -288,6 +306,65 @@
       x: Math.round(Math.min(maximumX, Math.max(margin, x))),
       y: Math.round(Math.min(maximumY, Math.max(margin, y))),
     };
+  }
+
+  function rightAnchoredLauncherPosition(position, viewport, launcherSize, inset = 12) {
+    return clampLauncherPosition(
+      {
+        x: (Number(viewport?.width) || 0) - (Number(launcherSize?.width) || 0) - inset,
+        y: Number.isFinite(position?.y) ? position.y : 70,
+      },
+      viewport,
+      launcherSize,
+    );
+  }
+
+  function focusAndSelectFormField(form, fieldName = "") {
+    const requested = fieldName ? form?.elements?.namedItem?.(fieldName) : null;
+    const field = requested || form?.querySelector?.("input, select, button");
+    field?.focus?.();
+    field?.select?.();
+    return field || null;
+  }
+
+  async function copyTextToClipboard(text, {
+    navigatorRef = globalScope.navigator,
+    documentRef = globalScope.document,
+  } = {}) {
+    try {
+      if (navigatorRef?.clipboard?.writeText) {
+        await navigatorRef.clipboard.writeText(text);
+        return;
+      }
+    } catch (_error) {
+      // Extension clipboard permission plus the selection fallback covers browsers
+      // that revoke transient user activation while Excalidraw creates the link.
+    }
+    if (!documentRef?.body || typeof documentRef.execCommand !== "function") {
+      throw new Error("The browser blocked clipboard access. Copy the link from Excalidraw's share dialog.");
+    }
+    const textarea = documentRef.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    documentRef.body.append(textarea);
+    textarea.focus();
+    textarea.select();
+    const copied = documentRef.execCommand("copy");
+    textarea.remove();
+    if (!copied) {
+      throw new Error("The browser blocked clipboard access. Copy the link from Excalidraw's share dialog.");
+    }
+  }
+
+  function requireActionResult(result, requiredFields = [], action = "This action") {
+    const valid = result && typeof result === "object"
+      && requiredFields.every((field) => result[field] !== null && result[field] !== undefined);
+    if (!valid) {
+      throw new Error(`${action} could not reach the updated background service. Reload the extension and refresh Excalidraw, then try again.`);
+    }
+    return result;
   }
 
   function positionLauncherElement(element, position) {
@@ -434,19 +511,24 @@
     SAVE_WARNING_GRACE_SECONDS,
     attachDraggableLauncher,
     clampLauncherPosition,
+    copyTextToClipboard,
     excalidrawControlsOffset,
     excalidrawThemeFromClassName,
     folderDropMode,
+    focusAndSelectFormField,
     getFileSyncHealth,
     getSaveHealth,
     isExtensionContextInvalidated,
     isSaveShortcut,
     isEditableEvent,
+    launcherPositionBesideSidebar,
     liveImageFileIds,
     normalizeSaveSettings,
     normalizeTheme,
     observeExcalidrawTheme,
     positionLauncherElement,
+    requireActionResult,
+    rightAnchoredLauncherPosition,
     protectEditableEvents,
     runWithInvalidationRecovery,
     shouldHighlightLauncher,

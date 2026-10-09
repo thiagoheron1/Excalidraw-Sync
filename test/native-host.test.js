@@ -31,3 +31,19 @@ test("native host purges expired trash and logs", () => {
   assert.equal(fs.existsSync(freshFile), true);
   fs.rmSync(root, { recursive: true });
 });
+
+test("native host can rehydrate a scene when the browser Trash record lost its payload", () => {
+  const { readTrashBackup } = require("../native-host/host.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "excalisync-trash-read-"));
+  const dateRoot = path.join(root, "2026-10-09");
+  const folderRoot = path.join(dateRoot, "personal-folder_123");
+  const scene = { type: "excalidraw", version: 2, elements: [{ id: "restored" }] };
+  fs.mkdirSync(folderRoot, { recursive: true });
+  fs.writeFileSync(path.join(folderRoot, "diagram.excalidraw"), JSON.stringify(scene));
+
+  assert.deepEqual(
+    readTrashBackup({ kind: "folder", id: "folder_123", fileName: "Diagram" }, root),
+    { scene },
+  );
+  fs.rmSync(root, { recursive: true });
+});

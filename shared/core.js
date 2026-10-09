@@ -547,7 +547,25 @@
     const richerEntry = entryScore(primary.entry) >= entryScore(secondary.entry)
       ? primary.entry
       : secondary.entry;
-    const richerArray = (left, right) => (left?.length || 0) >= (right?.length || 0) ? (left || []) : (right || []);
+    const richerArray = (left = [], right = []) => {
+      const merged = new Map();
+      for (const entry of [...right, ...left]) {
+        if (!entry?.id) continue;
+        const existing = merged.get(entry.id);
+        if (!existing) {
+          merged.set(entry.id, entry);
+          continue;
+        }
+        const preferred = entryScore(entry) >= entryScore(existing) ? entry : existing;
+        const fallback = preferred === entry ? existing : entry;
+        merged.set(entry.id, {
+          ...fallback,
+          ...preferred,
+          ...(preferred.scene || fallback.scene ? { scene: preferred.scene || fallback.scene } : {}),
+        });
+      }
+      return [...merged.values()];
+    };
     const shouldMergeRestores = timestamp(primary.deletedAt) === timestamp(secondary.deletedAt);
     const restoredEntries = new Map();
     for (const entry of [

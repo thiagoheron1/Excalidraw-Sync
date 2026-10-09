@@ -425,6 +425,66 @@ async function githubTree(owner, repo, branch, token) {
   }
 }
 
+async function getGitHubReference(owner, repo, branch, token) {
+  try {
+    return await githubRequest(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/ref/heads/${encodeGitHubPath(branch)}`,
+      token,
+      { cache: "no-store", headers: { "Cache-Control": "no-cache" } },
+    );
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+}
+
+async function updateGitHubReference(owner, repo, branch, token, sha, existingReference) {
+  if (existingReference) {
+    return githubRequest(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs/heads/${encodeGitHubPath(branch)}`,
+      token,
+      { method: "PATCH", body: JSON.stringify({ sha, force: true }) },
+    );
+  }
+  return githubRequest(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/refs`,
+    token,
+    { method: "POST", body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }) },
+  );
+}
+
+async function githubSquash(providers) {
+  if (!providers.github.auth?.accessToken) throw new Error("Connect GitHub first.");
+  const token = await githubToken(providers);
+  const repository = await ensureGitHubRepository(providers);
+  const owner = repository.owner.login;
+  const repo = repository.name;
+  const branch = repository.default_branch || "main";
+  const reference = await getGitHubReference(owner, repo, branch, token);
+  if (!reference?.object?.sha) throw new Error("GitHub default branch is not ready yet.");
+  const currentCommit = await githubRequest(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/commits/${reference.object.sha}`,
+    token,
+  );
+  const squashedCommit = await githubRequest(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/commits`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        message: "ExcaliSync squashed workspace",
+        tree: currentCommit.tree.sha,
+        parents: [],
+      }),
+    },
+  );
+  await updateGitHubReference(owner, repo, branch, token, squashedCommit.sha, reference);
+  providers.github.lastSyncAt = new Date().toISOString();
+  providers.github.lastError = null;
+  providers.github.lastErrorAt = null;
+  return { branch, commitSha: squashedCommit.sha, url: repository.html_url };
+}
+
 async function readGitHubWorkspace(repository, rootDirectory, token) {
   const owner = repository.owner.login;
   const repo = repository.name;
@@ -602,6 +662,12 @@ async function handleMessage(message) {
       await writeProviders(providers);
       return { ...result, providers: publicProviderState(providers) };
     }
+    case "github:squash": {
+      const providers = await readProviders();
+      const result = await githubSquash(providers);
+      await writeProviders(providers);
+      return { ...result, providers: publicProviderState(providers) };
+    }
     case "provider:disconnect": {
       const providers = await readProviders();
       if (message.provider === "github") {
@@ -619,6 +685,14 @@ async function handleMessage(message) {
       return syncInFlight;
     case "native:syncWorkspace":
       return nativeMessage({ type: "syncWorkspace", workspace: message.workspace });
+    case "native:readTrashBackup":
+      return nativeMessage({
+        type: "readTrashBackup",
+        kind: message.kind,
+        id: message.id,
+        name: message.name,
+        fileName: message.fileName,
+      });
     case "native:status":
       return nativeMessage({ type: "status" });
     case "native:openVault":

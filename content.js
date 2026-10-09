@@ -43,6 +43,7 @@
     providers: null,
     open: false,
     view: "files",
+    settingsTab: "general",
     query: "",
     collapsedFolders: new Set(),
     status: "Saved locally",
@@ -51,6 +52,7 @@
     syncTimer: null,
     githubPollTimer: null,
     launcherPosition: { x: 0, y: 70 },
+    launcherAnchoredRight: true,
     launcherVisible: true,
     sidebarRailHidden: false,
     launcherIntroduced: true,
@@ -327,6 +329,8 @@
     .panel.open .sidebar-toggle svg { transform: rotate(90deg); }
     .panel-header { display: flex; align-items: center; gap: 9px; padding: 15px 14px 13px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--surface), var(--bg)); }
     .brand-mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: white; background: linear-gradient(145deg, #7c78ec, var(--accent-solid)); box-shadow: 0 5px 16px rgba(71,65,170,.22); }
+    .brand-home { min-width: 0; flex: 1; display: flex; align-items: center; gap: 9px; margin: -5px; padding: 5px; border: 0; border-radius: 11px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+    .brand-home:hover, .brand-home:focus-visible { background: var(--surface-2); outline: none; }
     .brand { min-width: 0; flex: 1; }
     .brand strong { display: block; font-size: 16px; letter-spacing: -.02em; }
     .brand span { display: block; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -352,12 +356,14 @@
     .sync-row button:hover, .header-sync:hover { background: var(--surface-2); }
     .header-sync.syncing svg { animation: spin .9s linear infinite; }
     .cloud-status { display: grid; grid-template-columns: 1fr; gap: 7px; margin: 0 3px 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
-    .cloud-provider { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; padding: 8px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+    .cloud-provider { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: center; padding: 4px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
     .cloud-provider.has-error { border-color: var(--error-border); background: var(--danger-soft); }
+    .cloud-provider-main { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; padding: 4px; border: 0; border-radius: 7px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+    .cloud-provider-main:hover, .cloud-provider-main:focus-visible { background: var(--surface-2); outline: none; }
     .cloud-provider-copy { min-width: 0; }
     .cloud-provider-copy strong { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 650; white-space: nowrap; }
     .cloud-provider-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
-    .cloud-provider-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+    .cloud-provider-actions { display: inline-flex; align-items: center; gap: 2px; }
     .cloud-sync-action { width: 25px; height: 25px; border: 0; border-radius: 7px; background: transparent; color: var(--accent); display: grid; place-items: center; padding: 0; cursor: pointer; }
     .cloud-sync-action:hover { background: var(--active-bg); color: var(--accent-text); }
     .cloud-sync-action:disabled { opacity: .38; cursor: not-allowed; background: transparent; color: var(--muted); }
@@ -421,17 +427,28 @@
       50% { filter: brightness(1.45); transform: scale(1.09); }
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .manage-title { display: flex; align-items: center; gap: 8px; padding: 2px 2px 11px; }
+    .settings-hero { margin: -2px -2px 10px; padding: 11px; border: 1px solid var(--border); border-radius: 14px; background: linear-gradient(145deg, var(--active-bg), var(--surface)); }
+    .manage-title { display: flex; align-items: center; gap: 8px; padding: 0; }
     .manage-title > div { min-width: 0; flex: 1; }
     .manage-title h2 { font-size: 15px; line-height: 1.2; margin: 0; }
     .settings-subtitle { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .settings-hero-status { display: flex; align-items: center; gap: 6px; margin: 10px 2px 0 36px; color: var(--muted); font-size: 9.5px; }
+    .settings-hero-status svg { color: var(--accent); }
+    .settings-nav { position: sticky; top: -1px; z-index: 3; display: flex; gap: 4px; margin: 0 0 9px; padding: 5px; overflow-x: auto; scrollbar-width: none; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(10px); }
+    .settings-nav::-webkit-scrollbar { display: none; }
+    .settings-nav button { flex: 0 0 auto; min-height: 27px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: 600 9.5px/1 inherit; cursor: pointer; }
+    .settings-nav button:hover, .settings-nav button:focus-visible { background: var(--surface-2); color: var(--text); outline: none; }
+    .settings-nav button[aria-selected="true"] { background: var(--active-bg); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent); }
     .settings-form { display: grid; gap: 9px; }
-    .settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px; box-shadow: 0 2px 9px rgba(20,20,35,.035); }
+    .settings-card { scroll-margin-top: 48px; background: var(--surface); border: 1px solid var(--border); border-radius: 13px; padding: 12px; box-shadow: 0 2px 9px rgba(20,20,35,.035); }
+    .settings-card[hidden] { display: none; }
+    .settings-card:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
     .settings-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; color: var(--muted); }
     .settings-heading > svg { flex: 0 0 auto; color: var(--accent); }
     .settings-heading div { min-width: 0; flex: 1; }
     .settings-heading strong { display: block; color: var(--text); font-size: 12px; font-weight: 680; }
     .settings-heading small { display: block; margin-top: 1px; font-size: 9.5px; line-height: 1.3; }
+    .settings-subsection { margin: 12px -12px 10px; border-top: 1px solid var(--border); padding: 12px 12px 0; }
     .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
     .settings-grid .wide { grid-column: 1 / -1; }
     .compact-field { display: grid; gap: 4px; min-width: 0; color: var(--muted); font-size: 10px; }
@@ -467,6 +484,9 @@
     .provider-config .settings-grid { margin-bottom: 7px; }
     .provider-note { margin: 5px 0 0; color: var(--muted); font-size: 9.5px; line-height: 1.4; }
     .provider-note.error { color: var(--danger); }
+    .history-maintenance { display: grid; gap: 6px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); }
+    .history-maintenance > strong { font-size: 10.5px; }
+    .history-maintenance .button { justify-self: start; }
     .settings-auto-save { min-height: 18px; margin: 0; color: var(--muted); font-size: 10px; text-align: center; }
     .settings-auto-save[data-state="saving"] { color: var(--accent-link); }
     .settings-auto-save[data-state="error"] { color: var(--danger); }
@@ -751,13 +771,13 @@
     elements.panel.classList.toggle("open", open);
     elements.panel.classList.toggle("collapsed", !open);
     elements.backdrop.classList.toggle("open", open);
-    elements.launcher.classList.toggle("is-hidden", open);
     const sidebarToggle = elements.panel.querySelector("[data-action='toggle-sidebar']");
     const sidebarToggleLabel = state.open ? "Collapse sidebar" : "Expand sidebar";
     sidebarToggle?.setAttribute("aria-label", t(sidebarToggleLabel));
     sidebarToggle?.setAttribute("title", t(sidebarToggleLabel));
     sidebarToggle?.setAttribute("aria-expanded", String(state.open));
     if (open) {
+      ensureLauncherVisibleBesideSidebar();
       render();
       requestAnimationFrame(() => elements.panel.querySelector("button, input")?.focus());
     }
@@ -845,6 +865,15 @@
     };
   }
 
+  function anchoredLauncherPosition(y = state.launcherPosition?.y) {
+    const size = launcherSize();
+    return ExcalidrawSyncUIEvents.rightAnchoredLauncherPosition(
+      { y: Number.isFinite(y) ? y : 70 },
+      { width: window.innerWidth, height: window.innerHeight },
+      size,
+    );
+  }
+
   function defaultLauncherPosition() {
     const size = launcherSize();
     return ExcalidrawSyncUIEvents.clampLauncherPosition(
@@ -858,7 +887,10 @@
     const legacyTopRight = savedPosition
       && Number(savedPosition.y) <= 20
       && Number(savedPosition.x) >= window.innerWidth - 240;
-    return !savedPosition || legacyTopRight ? defaultLauncherPosition() : savedPosition;
+    state.launcherAnchoredRight = !savedPosition || savedPosition.anchor === "right" || legacyTopRight;
+    return state.launcherAnchoredRight
+      ? anchoredLauncherPosition(savedPosition?.y)
+      : savedPosition;
   }
 
   function applyLauncherPosition(position) {
@@ -873,9 +905,29 @@
   }
 
   function rememberLauncherPosition(position) {
-    void storageSet(LAUNCHER_POSITION_KEY, position).catch(() => {
+    void storageSet(LAUNCHER_POSITION_KEY, {
+      x: position.x,
+      y: position.y,
+      anchor: state.launcherAnchoredRight ? "right" : "free",
+    }).catch(() => {
       showToast("Could not remember the icon position.", "error");
     });
+  }
+
+  function ensureLauncherVisibleBesideSidebar() {
+    const result = ExcalidrawSyncUIEvents.launcherPositionBesideSidebar(
+      state.launcherPosition,
+      {
+        open: state.open,
+        sidebarWidth: Math.min(392, window.innerWidth * 0.94),
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        launcherSize: launcherSize(),
+      },
+    );
+    if (!result.moved) return;
+    state.launcherAnchoredRight = true;
+    applyLauncherPosition(result.position);
+    rememberLauncherPosition(result.position);
   }
 
   const launcherDrag = ExcalidrawSyncUIEvents.attachDraggableLauncher(elements.launcher, {
@@ -883,7 +935,10 @@
     getViewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
     getSize: launcherSize,
     onMove: applyLauncherPosition,
-    onCommit: rememberLauncherPosition,
+    onCommit: (position) => {
+      state.launcherAnchoredRight = false;
+      rememberLauncherPosition(position);
+    },
     onActivate: () => setOpen(true, { home: true, acknowledge: true }),
   });
 
@@ -891,7 +946,7 @@
   window.addEventListener("resize", () => {
     clearTimeout(launcherResizeTimer);
     launcherResizeTimer = setTimeout(() => {
-      const next = launcherDrag.constrain(state.launcherPosition);
+      const next = state.launcherAnchoredRight ? anchoredLauncherPosition() : launcherDrag.constrain(state.launcherPosition);
       if (next.x !== state.launcherPosition.x || next.y !== state.launcherPosition.y) {
         applyLauncherPosition(next);
         rememberLauncherPosition(next);
@@ -1303,7 +1358,7 @@
     elements.modalRoot.replaceChildren();
   }
 
-  function showFormDialog({ title, description = "", fields = [], confirmLabel = "Save", danger = false }) {
+  function showFormDialog({ title, description = "", fields = [], confirmLabel = "Save", danger = false, autoSelectName = "" }) {
     return new Promise((resolve) => {
       const layer = document.createElement("div");
       layer.className = "dialog-layer";
@@ -1351,7 +1406,7 @@
           closeDialog(null);
         }
       });
-      requestAnimationFrame(() => form.querySelector("input, select, button")?.focus());
+      requestAnimationFrame(() => ExcalidrawSyncUIEvents.focusAndSelectFormField(form, autoSelectName));
     });
   }
 
@@ -1519,7 +1574,7 @@
     const file = state.workspace.files.find((item) => item.id === fileId);
     if (!file) return;
     const result = await showFormDialog({
-      title: "File details",
+      title: "Rename File",
       fields: [
         {
           name: "folderId", label: "Folder", type: "select", value: file.folderId,
@@ -1527,6 +1582,7 @@
         },
         { name: "name", label: "File name", value: file.name, required: true },
       ],
+      autoSelectName: "name",
       confirmLabel: "Save",
     });
     if (!result) return;
@@ -1543,7 +1599,7 @@
     const action = await showActionDropdown(anchor, {
       label: `Actions for ${file.name}`,
       actions: [
-        { value: "details", label: "File details", icon: "edit" },
+        { value: "details", label: "Rename File", icon: "edit" },
         { value: "share", label: "Copy read-only link", icon: "link" },
         { value: "pin", label: file.pinned ? "Unpin file" : "Pin file", icon: "pin" },
         { value: "delete", label: "Delete file", icon: "trash", danger: true },
@@ -1568,7 +1624,6 @@
     const result = await showFormDialog({
       title: "New file",
       fields: [
-        { name: "name", label: "File name", value: "", placeholder: "New File", required: true },
         {
           name: "folderId",
           label: "Folder",
@@ -1576,7 +1631,9 @@
           value: folderId || state.workspace.folders[0]?.id,
           options: folderOptions(),
         },
+        { name: "name", label: "File name", value: "", placeholder: "New File", required: true },
       ],
+      autoSelectName: "name",
       confirmLabel: "Create file",
     });
     if (!result) {
@@ -1709,6 +1766,7 @@
   }
 
   async function restoreTrashItem(kind, id) {
+    await hydrateTrashBackup(kind, id);
     state.workspace = ExcalidrawSyncCore.restoreTrashEntry(state.workspace, kind, id);
     await persistWorkspace();
     render();
@@ -1716,6 +1774,7 @@
   }
 
   async function restoreTrashedFileItem(trashFolderId, fileId) {
+    await hydrateTrashBackup("folder", trashFolderId, fileId);
     state.workspace = ExcalidrawSyncCore.restoreTrashedFile(state.workspace, trashFolderId, fileId);
     await persistWorkspace();
     render();
@@ -1723,10 +1782,31 @@
   }
 
   async function restoreTrashedFolderItem(trashFolderId, folderId) {
+    await hydrateTrashBackup("folder", trashFolderId);
     state.workspace = ExcalidrawSyncCore.restoreTrashedFolder(state.workspace, trashFolderId, folderId);
     await persistWorkspace();
     render();
     showToast("Folder restored from Trash.");
+  }
+
+  async function hydrateTrashBackup(kind, id, onlyFileId = null) {
+    const item = ExcalidrawSyncCore.activeTrashItems(state.workspace)
+      .find((candidate) => candidate.kind === kind && candidate.entry?.id === id);
+    if (!item) return;
+    const targets = kind === "file"
+      ? [item.entry]
+      : (item.files || []).filter((file) => !onlyFileId || file.id === onlyFileId);
+    for (const target of targets) {
+      if (target?.scene) continue;
+      const backup = await sendMessage({
+        type: "native:readTrashBackup",
+        kind,
+        id,
+        name: item.entry?.name,
+        fileName: kind === "folder" ? target?.name : null,
+      });
+      if (backup?.scene) target.scene = backup.scene;
+    }
   }
 
   async function deleteAllLocalFiles() {
@@ -1885,11 +1965,22 @@
     });
   }
 
-  function controlWithLabel(pattern) {
-    return [...document.querySelectorAll("button")].find((button) => {
+  function controlWithLabel(pattern, root = document) {
+    return [...root.querySelectorAll("button")].find((button) => {
       const label = `${button.getAttribute("aria-label") || ""} ${button.title || ""} ${button.textContent || ""}`.trim();
       return pattern.test(label);
     });
+  }
+
+  function currentReadOnlyLink(root = document) {
+    const values = [...root.querySelectorAll("input, textarea, a")]
+      .map((item) => item.value || item.href || "");
+    return values.find((value) => /^https:\/\/excalidraw\.com\/#json=/.test(value)) || null;
+  }
+
+  function readOnlyLinkAction() {
+    const dialog = [...document.querySelectorAll('[role="dialog"], .Dialog')].at(-1) || document;
+    return controlWithLabel(/^(?:Export to Link|Create (?:a )?(?:shareable |read-only )?link|Get (?:a )?(?:shareable )?link)$/i, dialog);
   }
 
   async function copyShareLink(fileId) {
@@ -1906,11 +1997,12 @@
         exportButton = await waitFor(() => controlWithLabel(/Export to Link/i), 3000);
       }
       exportButton.click();
-      const link = await waitFor(() => {
-        const values = [...document.querySelectorAll("input, textarea, a")].map((item) => item.value || item.href || "");
-        return values.find((value) => /^https:\/\/excalidraw\.com\/#json=/.test(value));
-      }, 15_000);
-      await navigator.clipboard.writeText(link);
+      const ready = await waitFor(() => currentReadOnlyLink() || readOnlyLinkAction(), 5000);
+      if (typeof ready !== "string") ready.click();
+      const link = typeof ready === "string"
+        ? ready
+        : await waitFor(() => currentReadOnlyLink(), 15_000);
+      await ExcalidrawSyncUIEvents.copyTextToClipboard(link);
       showToast("Read-only Excalidraw link copied.");
     } finally {
       setOpen(true);
@@ -2017,8 +2109,11 @@
     const statusMessage = hasError ? `${provider.lastError} · ${lastSync}` : lastSync;
     return `
       <div class="cloud-provider ${hasError ? "has-error" : ""}" data-provider-status="${providerName}" title="${escapeHtml(`${automaticLabel}. ${statusMessage}.`)}">
-        ${providerIcon(providerName, 18)}
-        <span class="cloud-provider-copy"><strong>${escapeHtml(label)} <span class="auto-state ${automatic ? "on" : ""}" aria-label="${automaticLabel}">${automatic ? "Auto on" : "Auto off"}</span><span class="cloud-provider-actions" aria-label="GitHub sync controls"><button class="cloud-sync-action" type="button" data-action="github-pull" aria-label="${connected ? "Pull from GitHub" : "Connect GitHub to pull"}" title="${connected ? "Pull from GitHub" : "Connect GitHub to pull"}" ${connected ? "" : "disabled"}>${icon("pull", 16)}</button><button class="cloud-sync-action" type="button" data-action="github-push" aria-label="${connected ? "Push to GitHub" : "Connect GitHub to push"}" title="${connected ? "Push to GitHub" : "Connect GitHub to push"}" ${connected ? "" : "disabled"}>${icon("push", 16)}</button></span></strong><small>${escapeHtml(statusMessage)}</small></span>
+        <button class="cloud-provider-main" type="button" data-action="open-github-settings" aria-label="Open GitHub sync settings">
+          ${providerIcon(providerName, 18)}
+          <span class="cloud-provider-copy"><strong>${escapeHtml(label)} <span class="auto-state ${automatic ? "on" : ""}" aria-label="${automaticLabel}">${automatic ? "Auto on" : "Auto off"}</span></strong><small>${escapeHtml(statusMessage)}</small></span>
+        </button>
+        <span class="cloud-provider-actions" aria-label="GitHub sync controls"><button class="cloud-sync-action" type="button" data-action="github-pull" aria-label="${connected ? "Pull from GitHub" : "Connect GitHub to pull"}" title="${connected ? "Pull from GitHub" : "Connect GitHub to pull"}" ${connected ? "" : "disabled"}>${icon("pull", 16)}</button><button class="cloud-sync-action" type="button" data-action="github-push" aria-label="${connected ? "Push to GitHub" : "Connect GitHub to push"}" title="${connected ? "Push to GitHub" : "Connect GitHub to push"}" ${connected ? "" : "disabled"}>${icon("push", 16)}</button></span>
       </div>`;
   }
 
@@ -2106,6 +2201,7 @@
   }
 
   function renderManageView() {
+    if (state.settingsTab === "saving") state.settingsTab = "storage";
     const github = state.providers?.github;
     const trashCount = ExcalidrawSyncCore.activeTrashItems(state.workspace).length;
     const githubHasError = ExcalidrawSyncCore.hasActiveProviderError(github);
@@ -2113,12 +2209,21 @@
       ? github.account?.login || "Connected"
       : githubHasError ? "Needs attention" : "Not connected";
     return `
-      <div class="manage-title">
-        <button class="icon-button" type="button" data-action="back" aria-label="Back to files">${icon("back", 19)}</button>
-        <div><h2>Settings</h2><span class="settings-subtitle">Simple, local-first controls</span></div>
+      <div class="settings-hero">
+        <div class="manage-title">
+          <button class="icon-button" type="button" data-action="back" aria-label="Back to files">${icon("back", 19)}</button>
+          <div><h2>Settings</h2><span class="settings-subtitle">Your drawings stay local first, with GitHub when you choose</span></div>
+        </div>
+        <div class="settings-hero-status">${icon(github?.connected ? "check" : "cloud", 14)}<span>${github?.connected ? `GitHub connected as ${escapeHtml(githubStatus)}` : "Local protection is active"}</span></div>
       </div>
+      <nav class="settings-nav" aria-label="Settings sections" role="tablist">
+        <button type="button" role="tab" id="settings-tab-general" aria-controls="settings-general" aria-selected="${state.settingsTab === "general"}" tabindex="${state.settingsTab === "general" ? "0" : "-1"}" data-action="settings-jump" data-tab="general">General</button>
+        <button type="button" role="tab" id="settings-tab-storage" aria-controls="settings-storage" aria-selected="${state.settingsTab === "storage"}" tabindex="${state.settingsTab === "storage" ? "0" : "-1"}" data-action="settings-jump" data-tab="storage">Storage</button>
+        <button type="button" role="tab" id="settings-tab-github" aria-controls="settings-github" aria-selected="${state.settingsTab === "github"}" tabindex="${state.settingsTab === "github" ? "0" : "-1"}" data-action="settings-jump" data-tab="github">GitHub</button>
+        <button type="button" role="tab" id="settings-tab-trash" aria-controls="settings-trash" aria-selected="${state.settingsTab === "trash"}" tabindex="${state.settingsTab === "trash" ? "0" : "-1"}" data-action="settings-jump" data-tab="trash">Trash</button>
+      </nav>
       <form class="providers-form settings-form">
-        <section class="settings-card">
+        <section class="settings-card" id="settings-general" role="tabpanel" aria-labelledby="settings-tab-general" ${state.settingsTab === "general" ? "" : "hidden"}>
           <div class="settings-heading">${icon("settings", 17)}<div><strong>General</strong><small>Appearance and launcher</small></div></div>
           <div class="settings-grid">
             <label class="compact-field wide"><span>Language</span><select name="language">${ExcalidrawSyncI18n.SUPPORTED_LANGUAGES.map((language) => `<option value="${language}" ${state.language === language ? "selected" : ""}>${ExcalidrawSyncI18n.LANGUAGE_NAMES[language]}</option>`).join("")}</select></label>
@@ -2128,7 +2233,7 @@
           <label class="toggle-row"><span class="toggle-copy"><strong>Hide collapsed sidebar</strong><small>Open it from the ExcaliSync icon or browser extension button</small></span><input type="checkbox" name="sidebarRailHidden" ${state.sidebarRailHidden ? "checked" : ""}><span class="toggle-ui" aria-hidden="true"></span></label>
         </section>
 
-        <section class="settings-card">
+        <section class="settings-card" id="settings-storage" role="tabpanel" aria-labelledby="settings-tab-storage" ${state.settingsTab === "storage" ? "" : "hidden"}>
           <div class="settings-heading">${icon("check", 17)}<div><strong>Saving</strong><small>Local copies are always written first</small></div><span class="badge connected">Local first</span></div>
           <div class="settings-grid">
             <label class="compact-field"><span>Autosave</span><select name="saveMode"><option value="edit" ${state.saveSettings.mode === "edit" ? "selected" : ""}>After every edit</option><option value="interval" ${state.saveSettings.mode === "interval" ? "selected" : ""}>On a timer</option><option value="manual" ${state.saveSettings.mode === "manual" ? "selected" : ""}>Manual</option></select></label>
@@ -2138,21 +2243,20 @@
           </div>
           <label class="toggle-row"><span class="toggle-copy"><strong>Notifications</strong><small>Show save and sync alerts</small></span><input type="checkbox" name="notificationsEnabled" ${state.saveSettings.notificationsEnabled ? "checked" : ""}><span class="toggle-ui" aria-hidden="true"></span></label>
           <div class="save-summary"><span class="status-chip"><strong>Local save</strong>${escapeHtml(formatRelativeTime(state.lastSavedAt))}</span><span class="status-chip"><strong>Cloud sync</strong>${hasConnectedCloud() ? escapeHtml(formatRelativeTime(state.lastSyncedAt)) : "Not connected"}</span></div>
-        </section>
-
-        <section class="settings-card">
-          <div class="settings-heading">${icon("folder", 17)}<div><strong>Local storage</strong><small>Disk copy plus browser recovery copy</small></div><span class="badge ${state.nativeStorage.available ? "connected" : ""}">${state.nativeStorage.available ? "Connected" : "Helper needed"}</span></div>
+          <div class="settings-subsection">
+            <div class="settings-heading">${icon("folder", 17)}<div><strong>Local storage</strong><small>Disk copy plus browser recovery copy</small></div><span class="badge ${state.nativeStorage.available ? "connected" : ""}">${state.nativeStorage.available ? "Connected" : "Helper needed"}</span></div>
+          </div>
           <p class="storage-copy">Drawings are synchronized to <span class="vault-path">${escapeHtml(state.nativeStorage.root)}</span>. Deleted items remain in <span class="vault-path">.trash</span> for 30 days; error-only diagnostics remain in <span class="vault-path">.logs</span> for 7 days.</p>
           <div class="compact-actions"><button class="button" type="button" data-action="open-vault">${icon("openFolder", 15)} Open vault</button><button class="button danger" type="button" data-action="delete-local-files">${icon("trash", 14)} Delete files</button></div>
         </section>
 
-        <section class="settings-card cloud-settings">
+        <section class="settings-card cloud-settings" id="settings-github" role="tabpanel" aria-labelledby="settings-tab-github" ${state.settingsTab === "github" ? "" : "hidden"}>
           <div class="settings-heading">${icon("cloud", 17)}<div><strong>Cloud sync</strong><small>Expand a provider to configure it</small></div></div>
           <div class="settings-grid">
             <label class="compact-field wide"><span>Sync authority</span><select name="syncAuthority"><option value="local" ${state.providers?.syncAuthority === "local" ? "selected" : ""}>Local only</option><option value="github" ${state.providers?.syncAuthority === "github" ? "selected" : ""}>GitHub</option></select></label>
           </div>
           <p class="provider-note">Choose one cloud authority. Local storage remains the offline fallback; pending local changes merge when the selected provider is available again.</p>
-          <details class="provider-disclosure" ${github?.pendingAuth || githubHasError ? "open" : ""}>
+          <details class="provider-disclosure" data-provider-settings="github" ${github?.pendingAuth || githubHasError ? "open" : ""}>
             <summary>${providerIcon("github", 20)}<span class="provider-summary-copy"><strong>GitHub</strong><small>${escapeHtml(githubStatus)}</small></span><span class="badge ${github?.connected ? "connected" : ""}">${github?.connected ? "On" : "Off"}</span><span class="chevron">${icon("chevron", 15)}</span></summary>
             <div class="provider-config">
               <div class="settings-grid">
@@ -2165,12 +2269,13 @@
               <details class="setup-guide"><summary>Create a GitHub OAuth App</summary><ol><li>Open GitHub Settings → Developer settings → OAuth Apps → <strong>New OAuth App</strong>.</li><li><strong>Application name:</strong> enter <code>ExcaliSync</code> (or another name you will recognize).</li><li><strong>Homepage URL:</strong> enter <code>https://excalidraw.com/</code>.</li><li><strong>Application description:</strong> optional; for example, <code>Sync Excalidraw drawings to my GitHub repository.</code></li><li><strong>Redirect URI:</strong> enter <code>https://excalidraw.com/</code>. GitHub requires this field, although ExcaliSync uses Device Flow and does not redirect to it.</li><li>Leave <strong>Allow wildcard matching</strong> off.</li><li>Turn <strong>Enable Device Flow</strong> on.</li><li>Keep <strong>Expire user access tokens</strong> on. ExcaliSync securely rotates Device Flow access and refresh tokens when GitHub expires them.</li><li>Select <strong>Register application</strong>, then copy only the <strong>Client ID</strong> into ExcaliSync.</li><li>Do not generate, paste, or share a client secret. A client ID is public; access tokens remain in extension-owned storage and are never added to drawings, logs, or Git commits.</li><li>On another machine, use the same GitHub account, Client ID, repository name, and root folder. The first sync downloads and merges the existing library.</li></ol></details>
               ${github?.pendingAuth ? `<div class="device-code"><span>Enter this code on GitHub</span><strong>${escapeHtml(github.pendingAuth.userCode)}</strong><a class="text-link" href="${escapeHtml(github.pendingAuth.verificationUri)}" target="_blank" rel="noreferrer">Open GitHub ${icon("external", 12)}</a></div>` : ""}
               <div class="compact-actions"><button class="button primary" type="button" data-action="github-connect">${github?.connected ? "Reconnect" : "Connect"}</button>${github?.connected ? '<button class="button" type="button" data-action="github-pull">Pull</button><button class="button" type="button" data-action="github-push">Push</button><button class="button danger" type="button" data-action="github-force-push">Force push</button><button class="button danger" type="button" data-action="disconnect" data-provider="github">Disconnect</button>' : ""}</div>
+              ${github?.connected ? '<div class="history-maintenance"><strong>Repository history</strong><p class="provider-note">Replace the default branch history with one commit while preserving its current files.</p><button class="button danger" type="button" data-action="github-squash">Squash default branch history</button></div>' : ""}
               ${github?.connected ? '<p class="provider-note">Pull replaces this browser’s local library with GitHub. Push safely merges GitHub first. Force push makes this browser’s local library authoritative and may overwrite remote ExcaliSync files.</p>' : ""}
               <p class="provider-note ${githubHasError ? "error" : ""}">${githubHasError ? escapeHtml(github.lastError) : github?.account ? `Signed in as ${escapeHtml(github.account.login)}. ${providerLink(github.repositoryUrl, "Repository")}` : "A private repository is created on first sync."}</p>
             </div>
           </details>
         </section>
-        <section class="settings-card">
+        <section class="settings-card" id="settings-trash" role="tabpanel" aria-labelledby="settings-tab-trash" ${state.settingsTab === "trash" ? "" : "hidden"}>
           <div class="settings-heading">${icon("trash", 17)}<div><strong>Trash</strong><small>Recover items deleted during the last 30 days</small></div><span class="badge">${trashCount}</span></div>
           <p class="storage-copy">Deleted files and folders stay hidden from your library while their backup remains recoverable for 30 days.</p>
           <div class="compact-actions"><button class="button" type="button" data-action="open-trash">${icon("trash", 14)} Review Trash</button></div>
@@ -2222,27 +2327,18 @@
       filesByFolder.get(file.folderId).push(file);
     }
 
-    const subtreeHasUnavailableFile = (folderId, visited = new Set()) => {
-      if (visited.has(folderId)) return false;
-      visited.add(folderId);
-      if ((filesByFolder.get(folderId) || []).some((file) => !file.scene)) return true;
-      return (childrenByParent.get(folderId) || [])
-        .some((folder) => subtreeHasUnavailableFile(folder.id, visited));
-    };
     const renderFolder = (folder, ancestry = new Set()) => {
       if (ancestry.has(folder.id)) return "";
       const nextAncestry = new Set(ancestry).add(folder.id);
       const childFolders = childrenByParent.get(folder.id) || [];
       const files = filesByFolder.get(folder.id) || [];
-      const canRestore = !subtreeHasUnavailableFile(folder.id);
       const childMarkup = [
         ...childFolders.map((child) => renderFolder(child, nextAncestry)),
         ...files.map((file) => {
-          const fileCanRestore = Boolean(file.scene);
           return `<div class="trash-tree-row">
             <span class="trash-item-icon">${icon("file", 14)}</span>
             <span class="trash-item-copy"><strong data-i18n-skip>${escapeHtml(file.name || "Deleted file")}</strong><small>File</small></span>
-            <button class="button" type="button" data-action="restore-trash-file" data-trash-id="${escapeHtml(item.entry.id)}" data-id="${escapeHtml(file.id)}" ${fileCanRestore ? "" : "disabled"} title="${fileCanRestore ? "Restore file" : "Backup unavailable on this device"}">${icon("sync", 13)} Restore</button>
+            <button class="button" type="button" data-action="restore-trash-file" data-trash-id="${escapeHtml(item.entry.id)}" data-id="${escapeHtml(file.id)}" title="Restore file">${icon("sync", 13)} Restore</button>
           </div>`;
         }),
       ].join("");
@@ -2250,7 +2346,7 @@
         <div class="trash-tree-row">
           <span class="trash-item-icon">${icon("folder", 14)}</span>
           <span class="trash-item-copy"><strong data-i18n-skip>${escapeHtml(folder.name || "Deleted folder")}</strong><small>Folder</small></span>
-          <button class="button" type="button" data-action="restore-trash-folder" data-trash-id="${escapeHtml(item.entry.id)}" data-id="${escapeHtml(folder.id)}" ${canRestore ? "" : "disabled"} title="${canRestore ? "Restore folder" : "A file backup is unavailable on this device"}">${icon("sync", 13)} Restore</button>
+          <button class="button" type="button" data-action="restore-trash-folder" data-trash-id="${escapeHtml(item.entry.id)}" data-id="${escapeHtml(folder.id)}" title="Restore folder">${icon("sync", 13)} Restore</button>
         </div>
         ${childMarkup ? `<div class="trash-tree-children">${childMarkup}</div>` : ""}
       </div>`;
@@ -2275,9 +2371,6 @@
           const expiresAt = new Date(item.deletedAt).getTime() + ExcalidrawSyncCore.TRASH_RETENTION_MS;
           const daysRemaining = Math.max(1, Math.ceil((expiresAt - Date.now()) / 86_400_000));
           if (isFolder) return renderTrashedFolderTree(item, daysRemaining);
-          const canRestore = isFolder
-            ? Boolean(item.folders?.length || item.entry?.name)
-            : Boolean(item.entry?.scene);
           const itemName = item.entry?.name || (isFolder ? "Deleted folder" : "Deleted file");
           const contents = isFolder && item.files?.length
             ? ` · ${item.files.length} file${item.files.length === 1 ? "" : "s"}`
@@ -2285,7 +2378,7 @@
           return `<article class="trash-item">
             <span class="trash-item-icon">${icon(isFolder ? "folder" : "file", 17)}</span>
             <span class="trash-item-copy"><strong data-i18n-skip>${escapeHtml(itemName)}</strong><small>Deleted ${escapeHtml(formatRelativeTime(item.deletedAt))}${contents} · ${daysRemaining} day${daysRemaining === 1 ? "" : "s"} remaining</small></span>
-            <button class="button" type="button" data-action="restore-trash" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.entry.id)}" ${canRestore ? "" : "disabled"} title="${canRestore ? "Restore" : "Backup unavailable on this device"}">${icon("sync", 14)} Restore</button>
+            <button class="button" type="button" data-action="restore-trash" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.entry.id)}" title="Restore">${icon("sync", 14)} Restore</button>
           </article>`;
         }).join("") : '<div class="empty">Trash is empty.</div>'}
       </div>`;
@@ -2307,8 +2400,10 @@
   function renderHeader() {
     const notificationCount = state.notifications.filter((item) => !item.readAt).length + (saveHealth().kind ? 1 : 0);
     replaceMarkup(elements.header, `
-      <div class="brand-mark">${icon("logo", 22)}</div>
-      <div class="brand"><strong>ExcaliSync</strong><span>${escapeHtml(state.workspace?.name || "My Excalidraw")}</span></div>
+      <button class="brand-home" type="button" data-action="home" aria-label="Go to ExcaliSync home">
+        <span class="brand-mark">${icon("logo", 22)}</span>
+        <span class="brand"><strong>ExcaliSync</strong><span>${escapeHtml(state.workspace?.name || "My Excalidraw")}</span></span>
+      </button>
       <button class="icon-button header-sync" type="button" data-action="sync" aria-label="Sync all documents now" title="Sync all documents now">${icon("sync", 19)}</button>
       <button class="icon-button notification-button" type="button" data-action="notifications" aria-label="Notifications${notificationCount ? `, ${notificationCount} alert${notificationCount === 1 ? "" : "s"}` : ""}">${icon("bell", 20)}${notificationCount ? `<span class="notification-badge">${Math.min(99, notificationCount)}</span>` : ""}</button>
       <button class="icon-button" type="button" data-action="close" aria-label="Close sidebar">${icon("close", 21)}</button>`);
@@ -2642,7 +2737,15 @@
   }
 
   async function pushToGitHub({ force = false } = {}) {
-    if (force) {
+    if (!force) {
+      const confirmed = await showFormDialog({
+        title: "Push to GitHub?",
+        description: "This uploads your local ExcaliSync library and can overwrite changed drawing files in the GitHub repository after merging the latest remote version.",
+        confirmLabel: "Push and overwrite",
+        danger: true,
+      });
+      if (!confirmed) return;
+    } else {
       const confirmed = await showFormDialog({
         title: "Force push to GitHub?",
         description: "This makes this browser’s local library authoritative and can overwrite remote ExcaliSync files. Other repository files are not touched.",
@@ -2666,6 +2769,44 @@
     } finally {
       setBusy(false, "Saved locally");
     }
+  }
+
+  async function squashGitHubHistory() {
+    const confirmed = await showFormDialog({
+      title: "Squash GitHub history?",
+      description: "This permanently replaces the default branch history with one commit. Existing clones will need to reset or clone again. The current repository files are preserved.",
+      fields: [{ name: "confirmation", label: 'Type "squash" to confirm', value: "", required: true }],
+      confirmLabel: "Squash history",
+      danger: true,
+    });
+    if (!confirmed) return;
+    if (confirmed.confirmation.trim().toLowerCase() !== "squash") {
+      showToast('Type "squash" exactly to confirm.', "error");
+      return;
+    }
+    setBusy(true, "Squashing GitHub history…");
+    try {
+      const response = await sendMessage({ type: "github:squash" });
+      const result = ExcalidrawSyncUIEvents.requireActionResult(response, ["providers", "branch"], "Squash GitHub history");
+      state.providers = result.providers || state.providers;
+      render();
+      showToast(`Squashed ${result.branch} into one commit.`);
+    } finally {
+      setBusy(false, "Saved locally");
+    }
+  }
+
+  function openGitHubSettings() {
+    state.settingsTab = "github";
+    state.view = "manage";
+    render();
+    window.requestAnimationFrame(() => {
+      const githubSettings = elements.body.querySelector('[data-provider-settings="github"]');
+      if (!githubSettings) return;
+      githubSettings.open = true;
+      githubSettings.scrollIntoView({ behavior: "smooth", block: "start" });
+      githubSettings.querySelector("summary")?.focus();
+    });
   }
 
   elements.backdrop.addEventListener("click", () => setOpen(false));
@@ -2742,7 +2883,16 @@
         if (action === "import-link") await importSharedLink();
         if (action === "folder-section-menu") await openFolderSectionMenu(button);
         if (action === "folder-menu") await openFolderMenu(button.dataset.id, button);
-        if (action === "manage") { state.view = "manage"; render(); }
+        if (action === "home") { state.view = "files"; render(); }
+        if (action === "manage") { state.settingsTab = "general"; state.view = "manage"; render(); }
+        if (action === "settings-jump") {
+          const tabs = new Set(["general", "storage", "github", "trash"]);
+          if (tabs.has(button.dataset.tab)) {
+            state.settingsTab = button.dataset.tab;
+            render();
+            elements.body.querySelector(`[role="tab"][data-tab="${state.settingsTab}"]`)?.focus();
+          }
+        }
         if (action === "open-trash") { state.view = "trash"; render(); }
         if (action === "back-manage") { state.view = "manage"; render(); }
         if (action === "restore-trash") await restoreTrashItem(button.dataset.kind, button.dataset.id);
@@ -2778,9 +2928,11 @@
         }
         if (action === "delete-local-files") await deleteAllLocalFiles();
         if (action === "github-connect") await connectGitHub();
+        if (action === "open-github-settings") openGitHubSettings();
         if (action === "github-pull") await pullFromGitHub();
         if (action === "github-push") await pushToGitHub();
         if (action === "github-force-push") await pushToGitHub({ force: true });
+        if (action === "github-squash") await squashGitHubHistory();
         if (action === "disconnect") {
           state.providers = await sendMessage({ type: "provider:disconnect", provider: button.dataset.provider });
           showToast("Provider disconnected from this browser.");

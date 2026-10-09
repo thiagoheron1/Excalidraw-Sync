@@ -46,6 +46,14 @@ test("GitHub pull, push, and force-push controls are localized", () => {
   assert.equal(i18n.translate("Push to GitHub", "de"), "An GitHub senden");
 });
 
+test("GitHub push confirmation and squash controls are localized", () => {
+  for (const language of ["pt-BR", "es", "fr", "de"]) {
+    assert.notEqual(i18n.translate("Push and overwrite", language), "Push and overwrite");
+    assert.notEqual(i18n.translate("Squash default branch history", language), "Squash default branch history");
+    assert.notEqual(i18n.translate('Type "squash" to confirm', language), 'Type "squash" to confirm');
+  }
+});
+
 test("manifest metadata has locale catalogs for every supported language", () => {
   assert.equal(manifest.default_locale, "en");
   assert.ok(manifest.content_scripts[0].js.indexOf("shared/i18n.js") < manifest.content_scripts[0].js.indexOf("content.js"));

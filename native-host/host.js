@@ -59,6 +59,29 @@ function trashPath(item) {
   return path.join(TRASH_ROOT, date, `${safeSegment(item.entry?.name)}-${safeSegment(item.entry?.id, "entry")}`);
 }
 
+function readTrashBackup({ kind, id, name, fileName }, root = TRASH_ROOT) {
+  if (!id || !fs.existsSync(root)) return null;
+  const idSuffix = `-${safeSegment(id, "entry")}`;
+  for (const dateEntry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!dateEntry.isDirectory()) continue;
+    const dateRoot = path.join(root, dateEntry.name);
+    for (const entry of fs.readdirSync(dateRoot, { withFileTypes: true })) {
+      if (kind === "file" && entry.isFile() && entry.name.endsWith(`${idSuffix}.excalidraw`)) {
+        return { scene: JSON.parse(fs.readFileSync(path.join(dateRoot, entry.name), "utf8")) };
+      }
+      if (kind === "folder" && entry.isDirectory() && entry.name.endsWith(idSuffix)) {
+        const folderRoot = path.join(dateRoot, entry.name);
+        if (!fileName) return { found: true };
+        const scenePath = path.join(folderRoot, `${safeSegment(fileName)}.excalidraw`);
+        if (fs.existsSync(scenePath)) {
+          return { scene: JSON.parse(fs.readFileSync(scenePath, "utf8")) };
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function syncWorkspace(workspace) {
   ensureRoots();
   purgeExpiredEntries(TRASH_ROOT, 30 * DAY_MS);
@@ -171,6 +194,7 @@ function handleMessage(message) {
     return { root: VAULT_ROOT, available: true, workspace: readWorkspace() };
   }
   if (message?.type === "syncWorkspace") return syncWorkspace(message.workspace || {});
+  if (message?.type === "readTrashBackup") return readTrashBackup(message);
   if (message?.type === "writeErrorLog") return writeErrorLog(message.error || {});
   if (message?.type === "openVault") {
     ensureRoots();
@@ -213,4 +237,4 @@ function runNativeHost() {
 
 if (require.main === module) runNativeHost();
 
-module.exports = { DAY_MS, VAULT_ROOT, purgeExpiredEntries, syncWorkspace, writeErrorLog, readWorkspace, handleMessage };
+module.exports = { DAY_MS, VAULT_ROOT, purgeExpiredEntries, readTrashBackup, syncWorkspace, writeErrorLog, readWorkspace, handleMessage };
