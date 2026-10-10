@@ -157,9 +157,10 @@ test("primary file actions render as stacked full-width menu rows", () => {
   assert.match(content, /\.quick-action \{[^}]*width: 100%;[^}]*border: 0;[^}]*background: transparent/);
   assert.match(content, /\.quick-action:hover \{[^}]*background: var\(--surface-2\);[^}]*transform: none/);
   assert.match(content, /<nav class="quick-grid" aria-label="File actions">/);
+  assert.match(content, /data-action="manage">\$\{icon\("settings", 19\)\}<span>Settings<\/span>/);
 });
 
-test("home sections have dividers after Manage and cloud providers", () => {
+test("home sections have dividers after Settings and cloud providers", () => {
   assert.match(content, /\.quick-grid \{[^}]*border-bottom: 1px solid var\(--border\)/);
   assert.match(content, /\.cloud-status \{[^}]*border-bottom: 1px solid var\(--border\)/);
 });

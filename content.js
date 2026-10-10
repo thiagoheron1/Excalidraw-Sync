@@ -68,6 +68,7 @@
     draggedFileId: null,
     draggedFolderId: null,
     importFolderId: null,
+    historyPreview: false,
   };
   let settingsSaveTimer = null;
   let settingsSaveQueue = Promise.resolve();
@@ -211,6 +212,7 @@
       alert: '<path d="M12 3 2.5 20h19z"/><path d="M12 9v4M12 17h.01"/>',
       more: '<circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/>',
       link: '<path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"/>',
+      history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5M12 7v5l3 2"/>',
     };
     return `<svg aria-hidden="true" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ""}</svg>`;
   }
@@ -487,6 +489,9 @@
     .history-maintenance { display: grid; gap: 6px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); }
     .history-maintenance > strong { font-size: 10.5px; }
     .history-maintenance .button { justify-self: start; }
+    .input-with-suffix { display: grid; grid-template-columns: minmax(0, 110px) auto; align-items: center; gap: 7px; }
+    .input-with-suffix input { width: 100%; height: 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); color: var(--text); padding: 0 9px; }
+    .input-with-suffix > span { color: var(--muted); font-size: 10px; }
     .settings-auto-save { min-height: 18px; margin: 0; color: var(--muted); font-size: 10px; text-align: center; }
     .settings-auto-save[data-state="saving"] { color: var(--accent-link); }
     .settings-auto-save[data-state="error"] { color: var(--danger); }
@@ -549,6 +554,26 @@
     .dialog p { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
     .dialog .field input, .dialog .field select { background: var(--dialog-input); }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .history-dialog { width: min(520px, 94vw); padding: 16px; }
+    .history-dialog-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+    .history-dialog-header > div { min-width: 0; flex: 1; }
+    .history-dialog-header h2 { font-size: 17px; }
+    .history-dialog-header p { margin: 0; font-size: 11px; overflow-wrap: anywhere; }
+    .history-list { display: grid; gap: 7px; max-height: min(58vh, 520px); overflow-y: auto; padding: 1px; }
+    .history-version { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 58px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); padding: 9px 10px; text-align: left; cursor: pointer; }
+    .history-version:hover, .history-version:focus-visible { border-color: var(--accent); background: var(--active-bg); outline: none; }
+    .history-version-copy { min-width: 0; }
+    .history-version-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+    .history-version-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: 9.5px; }
+    .history-version-action { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-link); font-size: 10px; font-weight: 650; white-space: nowrap; }
+    .history-empty { padding: 20px 10px; border: 1px dashed var(--border); border-radius: 10px; color: var(--muted); font-size: 11px; text-align: center; }
+    .history-preview-layer { place-items: end center; padding-bottom: 24px; background: transparent; }
+    .history-preview-bar { width: min(620px, 94vw); border: 1px solid var(--accent); border-radius: 14px; background: var(--dialog-bg); padding: 13px 14px; box-shadow: 0 20px 70px var(--dialog-shadow); }
+    .history-preview-copy { display: flex; align-items: flex-start; gap: 9px; }
+    .history-preview-copy svg { flex: 0 0 auto; color: var(--accent); }
+    .history-preview-copy strong { display: block; font-size: 12px; }
+    .history-preview-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.35; }
+    .history-preview-bar .dialog-actions { margin-top: 11px; }
     .menu-root { position: fixed; inset: 0; z-index: 2147483001; pointer-events: none; }
     .action-dropdown { position: fixed; min-width: 190px; max-width: min(260px, calc(100vw - 16px)); padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--dialog-bg); box-shadow: 0 14px 38px var(--dialog-shadow); color: var(--text); pointer-events: auto; font: 11px/1.35 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     .action-dropdown button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 7px; background: transparent; color: inherit; padding: 7px 9px; text-align: left; cursor: pointer; }
@@ -1193,6 +1218,7 @@
   }
 
   async function captureAndSaveActive({ sync = true, force = false } = {}) {
+    if (state.historyPreview) return false;
     const file = state.workspace?.files.find((item) => item.id === state.workspace.activeFileId);
     if (!file) {
       return false;
@@ -1614,6 +1640,137 @@
       render();
     }
     if (action === "delete") await confirmDelete("file", fileId);
+  }
+
+  function formatHistoryTime(value) {
+    const date = new Date(value || 0);
+    if (!Number.isFinite(date.getTime())) return "Unknown time";
+    return new Intl.DateTimeFormat(state.language, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(date);
+  }
+
+  function showFileHistoryDialog(file, history) {
+    return new Promise((resolve) => {
+      const layer = document.createElement("div");
+      layer.className = "dialog-layer";
+      layer._resolve = resolve;
+      const versions = history.commits.length
+        ? history.commits.map((commit) => `
+          <button class="history-version" type="button" data-history-sha="${escapeHtml(commit.sha)}">
+            <span class="history-version-copy"><strong>${escapeHtml(commit.message)}</strong><small>${escapeHtml(formatHistoryTime(commit.committedAt))} · ${escapeHtml(commit.author)} · ${escapeHtml(commit.shortSha)}</small></span>
+            <span class="history-version-action">${icon("history", 14)} Preview this version</span>
+          </button>`).join("")
+        : '<div class="history-empty">No GitHub versions were found for this file yet. Sync it first, then make another edit to create history.</div>';
+      replaceMarkup(layer, `
+        <section class="dialog history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-dialog-title">
+          <div class="history-dialog-header">${icon("history", 20)}<div><h2 id="history-dialog-title">Version history</h2><p><span data-i18n-skip>${escapeHtml(file.name)}</span> · <span data-i18n-skip>${escapeHtml(history.path)}</span></p></div></div>
+          <div class="history-list">${versions}</div>
+          <div class="dialog-actions"><button class="button cancel" type="button">Close</button></div>
+        </section>`);
+      localizeUi(layer);
+      elements.modalRoot.append(layer);
+      layer.querySelector(".cancel").addEventListener("click", () => closeDialog(null));
+      layer.addEventListener("click", (event) => {
+        const version = event.target.closest("[data-history-sha]");
+        if (version) closeDialog(version.dataset.historySha);
+        else if (event.target === layer) closeDialog(null);
+      });
+      layer.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeDialog(null);
+      });
+      requestAnimationFrame(() => layer.querySelector("[data-history-sha], .cancel")?.focus());
+    });
+  }
+
+  function showHistoryPreviewConfirmation(file, commit) {
+    return new Promise((resolve) => {
+      const layer = document.createElement("div");
+      layer.className = "dialog-layer history-preview-layer";
+      layer._resolve = resolve;
+      replaceMarkup(layer, `
+        <section class="history-preview-bar" role="dialog" aria-modal="true" aria-labelledby="history-preview-title">
+          <div class="history-preview-copy">${icon("history", 20)}<div><strong id="history-preview-title">Previewing ${escapeHtml(file.name)}</strong><small>${escapeHtml(formatHistoryTime(commit.committedAt))} · ${escapeHtml(commit.message)}. This preview is read-only and has not changed your saved file.</small></div></div>
+          <div class="dialog-actions"><button class="button cancel" type="button">Back to history</button><button class="button primary restore" type="button">Restore this version</button></div>
+        </section>`);
+      localizeUi(layer);
+      elements.modalRoot.append(layer);
+      layer.querySelector(".cancel").addEventListener("click", () => closeDialog("back"));
+      layer.querySelector(".restore").addEventListener("click", () => closeDialog("restore"));
+      layer.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeDialog("back");
+      });
+      requestAnimationFrame(() => layer.querySelector(".restore")?.focus());
+    });
+  }
+
+  async function openFileHistory(fileId) {
+    const file = state.workspace.files.find((item) => item.id === fileId);
+    if (!file) return;
+    if (!state.providers?.github?.connected) {
+      showToast("Connect GitHub to view file history.", "error");
+      openGitHubSettings();
+      return;
+    }
+    await captureAndSaveActive({ sync: false });
+    setBusy(true, "Loading file history…");
+    let history;
+    try {
+      history = await sendMessage({
+        type: "github:fileHistory",
+        workspace: state.workspace,
+        fileId,
+      });
+    } finally {
+      setBusy(false, "Saved locally");
+    }
+    let selectedSha = await showFileHistoryDialog(file, history);
+    while (selectedSha) {
+      const commit = history.commits.find((item) => item.sha === selectedSha);
+      if (!commit) return;
+      const originalActiveId = state.workspace.activeFileId;
+      const originalActive = state.workspace.files.find((item) => item.id === originalActiveId);
+      const originalScene = originalActive ? ExcalidrawSyncCore.normalizeScene(originalActive.scene) : null;
+      let restored = false;
+      setBusy(true, "Loading version preview…");
+      try {
+        const version = await sendMessage({
+          type: "github:fileVersion",
+          workspace: state.workspace,
+          fileId,
+          sha: selectedSha,
+        });
+        state.historyPreview = true;
+        await applySceneInPlace(version.scene);
+        setOpen(false);
+        const decision = await showHistoryPreviewConfirmation(file, commit);
+        if (decision === "restore") {
+          state.workspace = ExcalidrawSyncCore.restoreFileVersion(
+            state.workspace,
+            fileId,
+            version.scene,
+            ExcalidrawSyncCore.nowIso(),
+          );
+          state.historyPreview = false;
+          await persistWorkspace();
+          await applySceneInPlace(version.scene);
+          restored = true;
+          showToast("Restored this file version. GitHub sync is queued.");
+        }
+      } finally {
+        if (!restored && originalScene) {
+          await applySceneInPlace(originalScene);
+          state.workspace.activeFileId = originalActiveId;
+        }
+        state.historyPreview = false;
+        setBusy(false, "Saved locally");
+        setOpen(true);
+        render();
+      }
+      if (restored) return;
+      selectedSha = await showFileHistoryDialog(file, history);
+    }
   }
 
   async function createFile(folderId = null) {
@@ -2131,6 +2288,7 @@
         </button>
         ${syncWarning ? `<span class="sync-warning has-tooltip" role="img" tabindex="0" aria-label="${escapeHtml(syncWarning)}" data-tooltip="${escapeHtml(syncWarning)}">${icon("alert", 17)}</span>` : ""}
         <div class="row-actions">
+          <button class="row-action" type="button" data-action="file-history" data-id="${escapeHtml(file.id)}" aria-label="Version history for ${escapeHtml(file.name)}" title="Version history">${icon("history", 16)}</button>
           <button class="row-action" type="button" data-action="file-more" data-id="${escapeHtml(file.id)}" aria-label="File actions for ${escapeHtml(file.name)}" aria-haspopup="menu" aria-expanded="false">${icon("more", 17)}</button>
         </div>
       </div>`;
@@ -2182,7 +2340,7 @@
       <nav class="quick-grid" aria-label="File actions">
         <button class="quick-action" type="button" data-action="new-file">${icon("file", 19)}<span>New file</span></button>
         <button class="quick-action" type="button" data-action="new-folder">${icon("folder", 19)}<span>New folder</span></button>
-        <button class="quick-action" type="button" data-action="manage">${icon("settings", 19)}<span>Manage</span></button>
+        <button class="quick-action" type="button" data-action="manage">${icon("settings", 19)}<span>Settings</span></button>
       </nav>
       <div class="sync-row ${health.level === "ok" ? "" : health.level}">${icon(health.level === "stale" ? "alert" : "cloud", 18)}<span>${escapeHtml(healthMessage(health))}</span><button type="button" data-action="sync" aria-label="Sync all documents now" title="Sync all documents now">${icon("sync", 18)}</button></div>
       <div class="cloud-status" aria-label="Automatic cloud sync status">${providerHomeStatus()}</div>
@@ -2203,6 +2361,7 @@
   function renderManageView() {
     if (state.settingsTab === "saving") state.settingsTab = "storage";
     const github = state.providers?.github;
+    const githubAutoSquash = ExcalidrawSyncCore.normalizeAutoSquashSettings(github?.autoSquash);
     const trashCount = ExcalidrawSyncCore.activeTrashItems(state.workspace).length;
     const githubHasError = ExcalidrawSyncCore.hasActiveProviderError(github);
     const githubStatus = github?.connected
@@ -2269,7 +2428,15 @@
               <details class="setup-guide"><summary>Create a GitHub OAuth App</summary><ol><li>Open GitHub Settings → Developer settings → OAuth Apps → <strong>New OAuth App</strong>.</li><li><strong>Application name:</strong> enter <code>ExcaliSync</code> (or another name you will recognize).</li><li><strong>Homepage URL:</strong> enter <code>https://excalidraw.com/</code>.</li><li><strong>Application description:</strong> optional; for example, <code>Sync Excalidraw drawings to my GitHub repository.</code></li><li><strong>Redirect URI:</strong> enter <code>https://excalidraw.com/</code>. GitHub requires this field, although ExcaliSync uses Device Flow and does not redirect to it.</li><li>Leave <strong>Allow wildcard matching</strong> off.</li><li>Turn <strong>Enable Device Flow</strong> on.</li><li>Keep <strong>Expire user access tokens</strong> on. ExcaliSync securely rotates Device Flow access and refresh tokens when GitHub expires them.</li><li>Select <strong>Register application</strong>, then copy only the <strong>Client ID</strong> into ExcaliSync.</li><li>Do not generate, paste, or share a client secret. A client ID is public; access tokens remain in extension-owned storage and are never added to drawings, logs, or Git commits.</li><li>On another machine, use the same GitHub account, Client ID, repository name, and root folder. The first sync downloads and merges the existing library.</li></ol></details>
               ${github?.pendingAuth ? `<div class="device-code"><span>Enter this code on GitHub</span><strong>${escapeHtml(github.pendingAuth.userCode)}</strong><a class="text-link" href="${escapeHtml(github.pendingAuth.verificationUri)}" target="_blank" rel="noreferrer">Open GitHub ${icon("external", 12)}</a></div>` : ""}
               <div class="compact-actions"><button class="button primary" type="button" data-action="github-connect">${github?.connected ? "Reconnect" : "Connect"}</button>${github?.connected ? '<button class="button" type="button" data-action="github-pull">Pull</button><button class="button" type="button" data-action="github-push">Push</button><button class="button danger" type="button" data-action="github-force-push">Force push</button><button class="button danger" type="button" data-action="disconnect" data-provider="github">Disconnect</button>' : ""}</div>
-              ${github?.connected ? '<div class="history-maintenance"><strong>Repository history</strong><p class="provider-note">Replace the default branch history with one commit while preserving its current files.</p><button class="button danger" type="button" data-action="github-squash">Squash default branch history</button></div>' : ""}
+              <div class="history-maintenance">
+                <strong>Repository history</strong>
+                <label class="toggle-row"><span class="toggle-copy"><strong>Automatic squash</strong><small>Keep GitHub history compact automatically</small></span><input type="checkbox" name="githubAutoSquashEnabled" ${githubAutoSquash.enabled ? "checked" : ""}><span class="toggle-ui" aria-hidden="true"></span></label>
+                <label class="compact-field"><span>Squash every</span><span class="input-with-suffix"><input type="number" name="githubAutoSquashDays" min="1" max="365" step="1" value="${githubAutoSquash.intervalDays}"><span>days</span></span></label>
+                <p class="provider-note">When due, ExcaliSync permanently replaces older commits with one baseline commit while preserving every current repository file. Per-file version history starts fresh, and traditional Git clones may need to reset or clone again.</p>
+                ${github?.autoSquash?.nextRunAt && githubAutoSquash.enabled ? `<p class="provider-note">Next automatic squash: ${escapeHtml(formatHistoryTime(github.autoSquash.nextRunAt))}.</p>` : ""}
+                ${github?.autoSquash?.lastError ? `<p class="provider-note error">Last automatic squash failed: ${escapeHtml(github.autoSquash.lastError)}</p>` : ""}
+                ${github?.connected ? '<button class="button danger" type="button" data-action="github-squash">Squash default branch history now</button>' : ""}
+              </div>
               ${github?.connected ? '<p class="provider-note">Pull replaces this browser’s local library with GitHub. Push safely merges GitHub first. Force push makes this browser’s local library authoritative and may overwrite remote ExcaliSync files.</p>' : ""}
               <p class="provider-note ${githubHasError ? "error" : ""}">${githubHasError ? escapeHtml(github.lastError) : github?.account ? `Signed in as ${escapeHtml(github.account.login)}. ${providerLink(github.repositoryUrl, "Repository")}` : "A private repository is created on first sync."}</p>
             </div>
@@ -2622,6 +2789,10 @@
         repoName: data.githubRepoName,
         visibility: data.githubVisibility,
         rootDirectory: data.githubRoot,
+        autoSquash: {
+          enabled: data.githubAutoSquashEnabled === "on",
+          intervalDays: Number(data.githubAutoSquashDays),
+        },
       },
     });
   }
@@ -2917,6 +3088,7 @@
         if (action === "copy-share-link") await copyShareLink(button.dataset.id);
         if (action === "sort-files") await chooseSortMode();
         if (action === "file-more") await openFileMenu(button.dataset.id, button);
+        if (action === "file-history") await openFileHistory(button.dataset.id);
         if (action === "sync") await syncNow();
         if (action === "open-vault") {
           try {

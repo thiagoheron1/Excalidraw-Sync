@@ -11,6 +11,8 @@ const PROVIDER_CREDENTIALS_KEY = "excalidrawSync.providerCredentials";
 const SIDEBAR_OPEN_REQUEST_KEY = "excalidrawSync.sidebarOpenRequested";
 const LAUNCHER_INTRODUCED_KEY = "excalidrawSync.launcherIntroduced";
 const NATIVE_HOST_NAME = "com.thiagoheron.excalidraw_sync";
+const GITHUB_AUTO_SQUASH_ALARM = "excalidrawSync.githubAutoSquash";
+const DAY_MS = 24 * 60 * 60 * 1000;
 let volatileProviderSession = null;
 let syncInFlight = Promise.resolve();
 
@@ -76,6 +78,12 @@ function defaultProviderState() {
       lastError: null,
       lastErrorAt: null,
       repositoryUrl: null,
+      autoSquash: {
+        ...ExcalidrawSyncCore.normalizeAutoSquashSettings(),
+        lastRunAt: null,
+        nextRunAt: null,
+        lastError: null,
+      },
     },
   };
 }
@@ -88,7 +96,14 @@ async function readProviders() {
   ]);
   const defaults = defaultProviderState();
   if (!stored) {
-    return ExcalidrawSyncSecurity.mergeProviderStorage(defaults, {}, sessionStored || {}, credentials || {});
+    const providers = ExcalidrawSyncSecurity.mergeProviderStorage(defaults, {}, sessionStored || {}, credentials || {});
+    providers.github.autoSquash = {
+      ...ExcalidrawSyncCore.normalizeAutoSquashSettings(providers.github.autoSquash),
+      lastRunAt: null,
+      nextRunAt: null,
+      lastError: null,
+    };
+    return providers;
   }
   const hasLegacyCredentials = ExcalidrawSyncSecurity.hasSensitiveProviderData(stored);
   const hasLegacySessionCredentials = Boolean(sessionStored?.github?.auth);
@@ -107,6 +122,12 @@ async function readProviders() {
     sessionStored || legacySession,
     credentials || legacySessionCredentials || legacyCredentials,
   );
+  providers.github.autoSquash = {
+    ...ExcalidrawSyncCore.normalizeAutoSquashSettings(providers.github.autoSquash),
+    lastRunAt: providers.github.autoSquash?.lastRunAt || null,
+    nextRunAt: providers.github.autoSquash?.nextRunAt || null,
+    lastError: providers.github.autoSquash?.lastError || null,
+  };
   if (hasLegacyCredentials || (!credentials && hasLegacySessionCredentials)) {
     await writeProviders(providers);
   }
@@ -140,6 +161,7 @@ function publicProviderState(providers) {
       lastError: providers.github.lastError,
       lastErrorAt: providers.github.lastErrorAt,
       repositoryUrl: providers.github.repositoryUrl,
+      autoSquash: providers.github.autoSquash,
     },
   };
 }
@@ -204,6 +226,32 @@ async function githubRequest(path, token, options = {}) {
       ...options.headers,
     },
   });
+}
+
+async function githubRawRequest(path, token) {
+  const response = await fetch(`https://api.github.com${path}`, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/vnd.github.raw+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Cache-Control": "no-cache",
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const body = JSON.parse(text);
+      detail = body?.message || detail;
+    } catch (_error) {
+      // GitHub may return plain text for raw-content failures.
+    }
+    const error = new Error(`${detail} (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return text;
 }
 
 async function githubToken(providers) {
@@ -485,6 +533,70 @@ async function githubSquash(providers) {
   return { branch, commitSha: squashedCommit.sha, url: repository.html_url };
 }
 
+function nextAutoSquashTime(autoSquash, now = Date.now()) {
+  return new Date(now + autoSquash.intervalDays * DAY_MS).toISOString();
+}
+
+async function configureAutoSquashAlarm(providersInput = null, { reset = false } = {}) {
+  const providers = providersInput || await readProviders();
+  const current = providers.github.autoSquash || {};
+  const settings = ExcalidrawSyncCore.normalizeAutoSquashSettings(current);
+  await apiCall(extensionApi.alarms, "clear", GITHUB_AUTO_SQUASH_ALARM).catch(() => false);
+  if (!settings.enabled) {
+    providers.github.autoSquash = { ...current, ...settings, nextRunAt: null };
+    await writeProviders(providers);
+    return providers.github.autoSquash;
+  }
+  const savedNext = new Date(current.nextRunAt || 0).getTime();
+  const when = !reset && Number.isFinite(savedNext) && savedNext > Date.now()
+    ? savedNext
+    : Date.now() + settings.intervalDays * DAY_MS;
+  providers.github.autoSquash = {
+    ...current,
+    ...settings,
+    nextRunAt: new Date(when).toISOString(),
+  };
+  await writeProviders(providers);
+  extensionApi.alarms.create(GITHUB_AUTO_SQUASH_ALARM, {
+    when,
+    periodInMinutes: settings.intervalDays * 24 * 60,
+  });
+  return providers.github.autoSquash;
+}
+
+async function runAutomaticGitHubSquash() {
+  const providers = await readProviders();
+  const autoSquash = {
+    ...providers.github.autoSquash,
+    ...ExcalidrawSyncCore.normalizeAutoSquashSettings(providers.github.autoSquash),
+  };
+  if (!autoSquash.enabled) return;
+  if (!providers.github.auth?.accessToken) {
+    providers.github.autoSquash = {
+      ...autoSquash,
+      nextRunAt: nextAutoSquashTime(autoSquash),
+    };
+    await configureAutoSquashAlarm(providers, { reset: true });
+    return;
+  }
+  try {
+    await githubSquash(providers);
+    providers.github.autoSquash = {
+      ...autoSquash,
+      lastRunAt: new Date().toISOString(),
+      nextRunAt: nextAutoSquashTime(autoSquash),
+      lastError: null,
+    };
+  } catch (error) {
+    providers.github.autoSquash = {
+      ...autoSquash,
+      nextRunAt: nextAutoSquashTime(autoSquash),
+      lastError: cleanMessage(error),
+    };
+  }
+  await configureAutoSquashAlarm(providers, { reset: true });
+}
+
 async function readGitHubWorkspace(repository, rootDirectory, token) {
   const owner = repository.owner.login;
   const repo = repository.name;
@@ -591,6 +703,70 @@ async function githubPull(providers) {
   return { workspace, url: repository.html_url };
 }
 
+function githubWorkspaceFile(workspace, providers, fileId) {
+  const file = ExcalidrawSyncCore.buildProviderFiles(
+    workspace,
+    providers.github.config.rootDirectory,
+  ).find((candidate) => candidate.id === fileId);
+  if (!file || !file.path.endsWith(".excalidraw")) {
+    throw new Error("This drawing does not have a GitHub path yet.");
+  }
+  return file;
+}
+
+async function githubFileHistory(workspace, fileId, providers) {
+  if (!providers.github.auth?.accessToken) throw new Error("Connect GitHub first.");
+  const token = await githubToken(providers);
+  const repository = await ensureGitHubRepository(providers);
+  const owner = repository.owner.login;
+  const repo = repository.name;
+  const branch = repository.default_branch || "main";
+  const file = githubWorkspaceFile(workspace, providers, fileId);
+  const commits = [];
+  for (let page = 1; ; page += 1) {
+    const batch = await githubRequest(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(file.path)}&per_page=100&page=${page}`,
+      token,
+      { cache: "no-store", headers: { "Cache-Control": "no-cache" } },
+    );
+    if (!Array.isArray(batch) || !batch.length) break;
+    commits.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return {
+    path: file.path,
+    commits: commits.map((entry) => ({
+      sha: entry.sha,
+      shortSha: String(entry.sha || "").slice(0, 7),
+      message: String(entry.commit?.message || "Saved drawing").split("\n")[0],
+      author: entry.author?.login || entry.commit?.author?.name || "GitHub user",
+      committedAt: entry.commit?.author?.date || entry.commit?.committer?.date || null,
+      url: entry.html_url || null,
+    })),
+  };
+}
+
+async function githubFileVersion(workspace, fileId, sha, providers) {
+  if (!providers.github.auth?.accessToken) throw new Error("Connect GitHub first.");
+  if (!/^[a-f0-9]{7,40}$/i.test(String(sha || ""))) {
+    throw new Error("Choose a valid GitHub file version.");
+  }
+  const token = await githubToken(providers);
+  const repository = await ensureGitHubRepository(providers);
+  const owner = repository.owner.login;
+  const repo = repository.name;
+  const file = githubWorkspaceFile(workspace, providers, fileId);
+  const content = await githubRawRequest(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(file.path)}?ref=${encodeURIComponent(sha)}`,
+    token,
+  );
+  return {
+    path: file.path,
+    sha,
+    scene: ExcalidrawSyncCore.normalizeScene(JSON.parse(content)),
+  };
+}
+
 
 function selectedSyncProvider(providers) {
   return providers.syncAuthority === "github" ? "github" : "local";
@@ -632,6 +808,10 @@ async function handleMessage(message) {
     case "providers:save": {
       const providers = await readProviders();
       if (message.github) {
+        const previousAutoSquash = providers.github.autoSquash;
+        const autoSquash = ExcalidrawSyncCore.normalizeAutoSquashSettings(message.github.autoSquash);
+        const scheduleChanged = previousAutoSquash.enabled !== autoSquash.enabled
+          || previousAutoSquash.intervalDays !== autoSquash.intervalDays;
         providers.github.config = {
           ...providers.github.config,
           clientId: String(message.github.clientId || "").trim(),
@@ -639,11 +819,19 @@ async function handleMessage(message) {
           visibility: message.github.visibility === "public" ? "public" : "private",
           rootDirectory: String(message.github.rootDirectory || "Excalidraw").trim(),
         };
+        providers.github.autoSquash = {
+          ...previousAutoSquash,
+          ...autoSquash,
+          nextRunAt: autoSquash.enabled
+            ? scheduleChanged ? nextAutoSquashTime(autoSquash) : previousAutoSquash.nextRunAt
+            : null,
+        };
       }
       if (["local", "github"].includes(message.syncAuthority)) {
         providers.syncAuthority = message.syncAuthority;
       }
       await writeProviders(providers);
+      await configureAutoSquashAlarm(providers, { reset: false });
       return publicProviderState(providers);
     }
     case "github:startAuth":
@@ -665,8 +853,24 @@ async function handleMessage(message) {
     case "github:squash": {
       const providers = await readProviders();
       const result = await githubSquash(providers);
-      await writeProviders(providers);
+      const autoSquash = ExcalidrawSyncCore.normalizeAutoSquashSettings(providers.github.autoSquash);
+      providers.github.autoSquash = {
+        ...providers.github.autoSquash,
+        ...autoSquash,
+        lastRunAt: new Date().toISOString(),
+        nextRunAt: autoSquash.enabled ? nextAutoSquashTime(autoSquash) : null,
+        lastError: null,
+      };
+      await configureAutoSquashAlarm(providers, { reset: autoSquash.enabled });
       return { ...result, providers: publicProviderState(providers) };
+    }
+    case "github:fileHistory": {
+      const providers = await readProviders();
+      return githubFileHistory(message.workspace, message.fileId, providers);
+    }
+    case "github:fileVersion": {
+      const providers = await readProviders();
+      return githubFileVersion(message.workspace, message.fileId, message.sha, providers);
     }
     case "provider:disconnect": {
       const providers = await readProviders();
@@ -719,6 +923,17 @@ extensionApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 extensionApi.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") {
     void storageSet(LAUNCHER_INTRODUCED_KEY, false).catch(() => {});
+  }
+  void configureAutoSquashAlarm().catch(() => {});
+});
+
+extensionApi.runtime.onStartup.addListener(() => {
+  void configureAutoSquashAlarm().catch(() => {});
+});
+
+extensionApi.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === GITHUB_AUTO_SQUASH_ALARM) {
+    void runAutomaticGitHubSquash();
   }
 });
 

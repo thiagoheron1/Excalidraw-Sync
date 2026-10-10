@@ -17,6 +17,17 @@
     return new Date().toISOString();
   }
 
+  function normalizeAutoSquashSettings(value = {}) {
+    const requestedDays = Number(value.intervalDays);
+    const intervalDays = Number.isInteger(requestedDays) && requestedDays >= 1 && requestedDays <= 365
+      ? requestedDays
+      : 30;
+    return {
+      enabled: value.enabled !== false,
+      intervalDays,
+    };
+  }
+
   function emptyScene() {
     return {
       type: "excalidraw",
@@ -469,6 +480,109 @@
     return remoteInput ? mergeWorkspaces(localInput, remoteInput) : normalizeWorkspace(localInput);
   }
 
+  function workspaceSyncEntries(workspaceInput) {
+    const workspace = normalizeWorkspace(workspaceInput);
+    const entries = new Map();
+    for (const folder of workspace.folders) {
+      entries.set(`folder:${folder.id}`, {
+        kind: "folder",
+        id: folder.id,
+        name: folder.name,
+        fingerprint: hashString(stableStringify({
+          parentId: folder.parentId || null,
+          name: folder.name,
+        })),
+        entry: folder,
+      });
+    }
+    for (const file of workspace.files) {
+      entries.set(`file:${file.id}`, {
+        kind: "file",
+        id: file.id,
+        name: file.name,
+        fingerprint: hashString(stableStringify({
+          folderId: file.folderId || null,
+          name: file.name,
+          pinned: Boolean(file.pinned),
+          sceneHash: hashScene(file.scene || emptyScene()),
+        })),
+        entry: file,
+      });
+    }
+    return entries;
+  }
+
+  function workspaceSyncBaseline(workspaceInput) {
+    const workspace = normalizeWorkspace(workspaceInput);
+    return {
+      version: 1,
+      workspaceId: workspace.id,
+      entries: Object.fromEntries(
+        [...workspaceSyncEntries(workspace).entries()].map(([key, value]) => [key, value.fingerprint]),
+      ),
+    };
+  }
+
+  function workspaceConflicts(localInput, remoteInput, baselineInput = null) {
+    if (!remoteInput) return [];
+    const localEntries = workspaceSyncEntries(localInput);
+    const remoteEntries = workspaceSyncEntries(remoteInput);
+    const baselineEntries = baselineInput?.entries && typeof baselineInput.entries === "object"
+      ? baselineInput.entries
+      : {};
+    const keys = new Set([
+      ...localEntries.keys(),
+      ...remoteEntries.keys(),
+      ...Object.keys(baselineEntries),
+    ]);
+    const conflicts = [];
+    for (const key of keys) {
+      const local = localEntries.get(key);
+      const remote = remoteEntries.get(key);
+      const localFingerprint = local?.fingerprint || null;
+      const remoteFingerprint = remote?.fingerprint || null;
+      if (localFingerprint === remoteFingerprint) continue;
+      const baselineKnown = Object.prototype.hasOwnProperty.call(baselineEntries, key);
+      const baselineFingerprint = baselineKnown ? baselineEntries[key] : null;
+      const bothChanged = baselineKnown
+        ? localFingerprint !== baselineFingerprint && remoteFingerprint !== baselineFingerprint
+        : Boolean(local && remote);
+      if (!bothChanged) continue;
+      const [kind, id] = key.split(":");
+      conflicts.push({
+        kind,
+        id,
+        name: local?.name || remote?.name || "Untitled",
+        localExists: Boolean(local),
+        remoteExists: Boolean(remote),
+      });
+    }
+    return conflicts;
+  }
+
+  function resolveWorkspaceSync(localInput, remoteInput, baselineInput = null, resolution = null) {
+    const local = normalizeWorkspace(localInput);
+    if (!remoteInput) return local;
+    const remote = normalizeWorkspace(remoteInput);
+    const conflicts = workspaceConflicts(local, remote, baselineInput);
+    const merged = mergeWorkspaces(local, remote);
+    if (!conflicts.length || !["local", "remote"].includes(resolution)) return merged;
+    const selected = resolution === "local" ? local : remote;
+    for (const conflict of conflicts) {
+      const collection = conflict.kind === "folder" ? "folders" : "files";
+      const selectedEntry = selected[collection].find((entry) => entry.id === conflict.id);
+      merged[collection] = merged[collection].filter((entry) => entry.id !== conflict.id);
+      if (selectedEntry) merged[collection].push(selectedEntry);
+      merged.trash = merged.trash.filter(
+        (item) => !(item.kind === conflict.kind && item.entry?.id === conflict.id),
+      );
+      merged.trash.push(...selected.trash.filter(
+        (item) => item.kind === conflict.kind && item.entry?.id === conflict.id,
+      ));
+    }
+    return normalizeWorkspace(merged);
+  }
+
   function descendantFolderIds(folders, rootId) {
     const result = new Set([rootId]);
     let changed = true;
@@ -820,6 +934,26 @@
     return workspace;
   }
 
+  function restoreFileVersion(workspaceInput, fileId, sceneInput, restoredAt = nowIso()) {
+    const workspace = normalizeWorkspace(workspaceInput);
+    const scene = normalizeScene(sceneInput);
+    let found = false;
+    workspace.files = workspace.files.map((file) => {
+      if (file.id !== fileId) return file;
+      found = true;
+      return {
+        ...file,
+        scene,
+        hash: hashScene(scene),
+        updatedAt: restoredAt,
+      };
+    });
+    if (!found) throw new Error("This drawing no longer exists in ExcaliSync.");
+    workspace.activeFileId = fileId;
+    workspace.updatedAt = restoredAt;
+    return workspace;
+  }
+
   function isDeleteSwipe(startX, endX, startY, endY) {
     const horizontal = startX - endX;
     const vertical = Math.abs(startY - endY);
@@ -855,6 +989,7 @@
     DEFAULT_FOLDER_NAME,
     makeId,
     nowIso,
+    normalizeAutoSquashSettings,
     emptyScene,
     normalizeScene,
     createWorkspace,
@@ -871,6 +1006,9 @@
     workspaceFromProviderIndex,
     mergeWorkspaces,
     reconcileWorkspaces,
+    workspaceSyncBaseline,
+    workspaceConflicts,
+    resolveWorkspaceSync,
     removeEntry,
     trashEntry,
     activeTrashItems,
@@ -882,6 +1020,7 @@
     sortedFiles,
     sortedFolders,
     moveFile,
+    restoreFileVersion,
     moveFolder,
     moveFolderToParent,
     isDeleteSwipe,

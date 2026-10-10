@@ -1,144 +1,300 @@
-# Excalidraw Sync
+<p align="center">
+  <img src="assets/excalisync-logo.png" width="168" alt="ExcaliSync logo">
+</p>
 
-Excalidraw Sync adds a file-and-folder sidebar to [Excalidraw](https://excalidraw.com/). Drawings stay available locally and can be synchronized with a GitHub repository.
+<h1 align="center">ExcaliSync</h1>
 
-## What works
+<p align="center">
+  A local-first file manager and GitHub sync companion for Excalidraw.
+</p>
 
-- Local-first `.excalidraw` files with embedded image preservation.
-- Folders, search, pinned files, rename/move, file and read-only-link import, drag-and-drop ordering, and one-click switching.
-- The current file is saved before another file opens, then Excalidraw changes scenes in place while the Files sidebar stays open.
-- Background autosave when Excalidraw's native scene changes.
-- Light, dark, automatic system, and default follow-Excalidraw themes.
-- An optional native helper that writes real files to `~/.excalidraw-sync`, plus browser and Excalidraw-site recovery mirrors.
-- Configurable save behavior: after each detected edit, at 5-second to 5-minute intervals, or manual only.
-- Latest local-save and cloud-sync timestamps. Warning backgrounds stay neutral through the selected autosave window plus a 30-second grace period, then turn yellow; red remains reserved for the later configurable stale limit.
-- A persistent notification history for unsaved work and cloud-sync failures; opening it marks items read without removing them.
-- GitHub Device Flow sign-in, automatic repository creation, private/public visibility, bidirectional cross-machine folder sync, and change-only commits.
-- Explicit GitHub **Pull**, merge-first **Push**, and guarded **Force push** controls for choosing how another machine reconciles its library.
-- Touch swipe-left deletion requests plus visible keyboard/desktop delete buttons. Both paths require confirmation and move entries to `.trash` for 30 days.
-- Error-only sanitized diagnostics in `.logs`, automatically removed after 7 days.
-- A per-file control that invokes Excalidraw's native read-only Shareable Link export and copies the result.
-- A draggable launcher icon that stays inside the viewport and remembers its position. Keyboard users can move it with Alt+Arrow keys.
-- A labeled **ExcaliSync** launcher that can be hidden from Manage settings; the browser-toolbar icon always remains an alternative way to open the sidebar.
-- A compact file sidebar with primary actions first, the latest-save status followed by search, one-click **Sync all**, and per-document yellow/red sync warnings.
-- A compact Settings screen with focused General, Saving, Local storage, and Cloud sync groups; provider credentials stay collapsed until needed.
-- A guarded **Delete all local files** action that requires typing `delete` and removes both the extension vault and reinstall recovery copy.
-- Manifest V3 packages for Chrome, Edge, Opera, and Firefox; Safari conversion instructions are below.
+<p align="center">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-6965db.svg"></a>
+  <img alt="Manifest V3" src="https://img.shields.io/badge/extension-Manifest%20V3-6965db.svg">
+  <img alt="Node.js 18 or newer" src="https://img.shields.io/badge/Node.js-%E2%89%A518-43853d.svg">
+  <img alt="Local first" src="https://img.shields.io/badge/storage-local--first-8b7cff.svg">
+</p>
 
-Local storage is always written first and acts as the offline working copy. GitHub is the optional cloud authority shared between machines. Automatic sync and **Push** download the managed index, merge files and folders by stable ID and newest modification time, apply deletion tombstones, then upload only differences. **Pull** intentionally replaces the current browser library after confirmation. **Force push** requires typed confirmation and makes the current browser library authoritative for ExcaliSync-managed repository files. Renames are synchronized as a new managed path plus removal of the old managed path.
+ExcaliSync adds a focused file-and-folder sidebar directly to [Excalidraw](https://excalidraw.com/). Organize drawings, switch between them without closing the sidebar, keep recoverable local copies, and optionally synchronize the same workspace between computers through a GitHub repository you control.
 
-If two machines edit the same drawing while offline, a normal Push uses the newest modification time; different drawings merge independently. Pull and Force push are explicit overwrite choices and always explain which side will become authoritative.
+> [!NOTE]
+> ExcaliSync is under active development and is currently installed from source. It is not yet published in browser extension stores.
 
-## Local vault
+## Why ExcaliSync?
 
-The extension always mirrors the workspace in browser extension storage and in an IndexedDB recovery copy belonging to `excalidraw.com`. When the native helper is installed it also writes ordinary `.excalidraw` files under `~/.excalidraw-sync`, regardless of whether GitHub is connected. On reinstall, an empty extension can restore the browser recovery mirror.
+Excalidraw is excellent for drawing, but a growing library of diagrams needs more structure. ExcaliSync supplies that missing workspace without replacing Excalidraw:
 
-Select **Manage → Local storage → Open vault** to open `~/.excalidraw-sync` in Finder. If the helper is unavailable, the button opens the browser recovery vault instead.
+- **Organize naturally** with nested folders, search, pinning, custom ordering, drag and drop, import, rename, and trash recovery.
+- **Work locally first** so every save reaches the browser before any network request.
+- **Sync on your terms** to a private or public GitHub repository, with explicit Pull, Push, and Force push controls.
+- **Move between computers** by connecting the same GitHub repository and pulling the existing library.
+- **Recover older work** from the per-file GitHub version history or from the 30-day local trash.
+- **Preserve embedded images** inside synchronized `.excalidraw` files.
 
-Browsers cannot write arbitrary home-directory files directly, so real disk storage uses the included native-messaging helper. After loading the unpacked Chrome build, copy its extension ID from `chrome://extensions` and run:
+## Highlights
 
-```bash
-./native-host/install-macos.sh YOUR_32_CHARACTER_EXTENSION_ID
+| Workspace | Saving and recovery | GitHub sync |
+| --- | --- | --- |
+| Nested folders and tree view | Automatic, timed, or manual saving | Private or public repository |
+| Drag-and-drop ordering | Browser recovery copy | Change-only commits |
+| File/link import | Optional disk vault | Cross-machine Pull and Push |
+| Fast in-place file switching | 30-day recoverable trash | Per-file version restore |
+| Read-only share links | 7-day sanitized error logs | Optional automatic history squash |
+| Five interface languages | Save and sync health indicators | Retry-safe conflict handling |
+
+ExcaliSync supports English, Brazilian Portuguese, Spanish, French, and German. It selects the browser language on first use. Its default theme follows Excalidraw, with system, light, and dark modes also available.
+
+## How it works
+
+```text
+Excalidraw scene
+      │
+      ▼
+Browser workspace ──► Excalidraw-site recovery copy
+      │
+      ├─────────────► ~/.excalidraw-sync (optional native helper)
+      │
+      └─────────────► GitHub repository (optional)
 ```
 
-Reload the extension after installation. The helper is restricted to its own host manifest and `~/.excalidraw-sync`; it stores no OAuth credentials. Deleted drawings are retained under `.trash` for 30 days, and sanitized error-only logs under `.logs` for 7 days.
+The browser workspace is always written first and remains the offline working copy. GitHub becomes the shared cloud authority only when you enable it. A normal Push downloads the managed index, merges files and folders by stable ID and modification time, applies deletion tombstones, and uploads only actual differences.
 
-Uninstall recovery is best effort: removing the extension alone does not normally erase Excalidraw's site storage, but clearing site data, using private browsing, deleting the browser profile, or a browser storage cleanup can remove the recovery mirror. Because it belongs to the `excalidraw.com` origin, scripts running on that origin share the same browser-storage trust boundary. Use GitHub as an additional independent backup for important diagrams.
+## Install from source
 
-Select **Manage → Local vault → Delete all local files** to intentionally erase all managed drawings and folders. The confirmation dialog requires typing `delete` exactly. The extension then removes both local copies and starts with one blank drawing; a future cloud sync may reflect those deletions remotely.
+### Requirements
 
-If the extension is reloaded or updated while Excalidraw is already open, ExcaliSync detects the invalidated browser context, preserves its in-memory workspace in temporary page-session recovery storage, reloads the page, and restores the pending change.
+- Node.js 18 or newer
+- npm
+- A Chromium browser, Firefox, or Safari with Xcode
 
-| Browser | Local files/folders | GitHub sync |
-| --- | --- | --- |
-| Chrome, Edge, Opera | Yes | Yes |
-| Firefox | Yes | Yes |
-| Safari | Yes | Yes |
-
-## Install locally
+Clone and build:
 
 ```bash
+git clone https://github.com/thiagoheron1/Excalidraw-Sync.git
+cd Excalidraw-Sync
+npm ci
 npm test
 npm run check
 npm run build
 ```
 
-Chrome, Edge, or Opera:
+The build creates:
 
-1. Open the browser's extensions page.
-2. Enable developer mode.
-3. Choose **Load unpacked** and select `dist/chrome`.
-4. Open `https://excalidraw.com/` and click the purple folder button.
+- `dist/chrome` for Chrome, Edge, Opera, Brave, and other Chromium browsers
+- `dist/firefox` for Firefox
+- packaged ZIP files for both targets
 
-Firefox:
+### Chrome, Edge, Opera, or Brave
+
+1. Open the browser extension page:
+   - Chrome or Brave: `chrome://extensions`
+   - Edge: `edge://extensions`
+   - Opera: `opera://extensions`
+2. Enable **Developer mode**.
+3. Choose **Load unpacked**.
+4. Select the generated `dist/chrome` folder.
+5. Open [excalidraw.com](https://excalidraw.com/).
+
+### Firefox
 
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Choose **Load Temporary Add-on**.
 3. Select `dist/firefox/manifest.json`.
+4. Open [excalidraw.com](https://excalidraw.com/).
 
-## GitHub setup
+Temporary Firefox add-ons are removed when Firefox restarts. Permanent distribution requires a signed add-on package.
 
-The extension uses GitHub Device Flow. Device Flow requires a public client ID but does not require a client secret.
+### Safari
 
-1. Sign in to GitHub and open **Settings**.
-2. Open **Developer settings → OAuth Apps**.
-3. Select **New OAuth App**.
-4. For **Application name**, enter `ExcaliSync` or another recognizable name.
-5. For **Homepage URL**, enter `https://excalidraw.com/`.
-6. **Application description** is optional. For example: `Sync Excalidraw drawings to my GitHub repository.`
-7. For **Redirect URI**, enter `https://excalidraw.com/`. GitHub requires this field even though ExcaliSync uses Device Flow and does not redirect to it.
-8. Leave **Allow wildcard matching** turned off.
-9. Turn **Enable Device Flow** on.
-10. Keep **Expire user access tokens** on. ExcaliSync rotates Device Flow access and refresh tokens without requiring a client secret.
-11. Select **Register application**.
-12. Copy the **Client ID**. Do not generate, copy, or paste a client secret into the extension.
-13. In ExcaliSync, open **Manage sync → GitHub** and paste the Client ID.
-14. Choose the repository name and private/public visibility, then select **Connect GitHub**.
-15. GitHub opens in a new tab. Enter the displayed one-time device code and approve access.
-16. Return to Excalidraw. The repository is created during the first sync.
-
-Official references: [creating a GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) and [GitHub Device Flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow).
-
-The repository is created during the first sync. The extension uses the GitHub Contents API and commits only files whose content changed. Remote removal is restricted to paths that were listed in the extension's previous sync index.
-
-### Cross-machine synchronization
-
-Install ExcaliSync on the other machine and configure the same provider target:
-
-- For GitHub, sign in to the same account and use the same OAuth Client ID, repository name, and root folder.
-- Select **Pull** after connecting if GitHub should replace the new browser's local library. Confirm the overwrite warning.
-- Select **Push** for a safe merge-first upload, or **Force push** only when this browser must overwrite the ExcaliSync-managed GitHub copy.
-- Deletions remain as synchronization tombstones during the 30-day trash-retention window so an offline machine does not recreate a deleted drawing when it reconnects.
-
-
-## OAuth credential security
-
-- OAuth **client IDs are public identifiers**. They appear in the extension and authorization requests and cannot be encrypted or hidden from users.
-- Never add a GitHub **client secret** to source code, the manifest, `.env` files included in a package, extension storage, screenshots, issues, or chat messages.
-- Access and refresh tokens are treated as secrets and stored in a dedicated extension-owned credential record so the connection survives browser and extension-worker restarts. They are never exposed through provider-status messages, page DOM, diagrams, logs, or Git commits. Pending GitHub device codes remain session-only.
-- GitHub refresh tokens rotate expired access tokens automatically. Disconnecting GitHub clears its stored credential record.
-- OAuth and API requests use HTTPS. Diagnostics sanitize token-like values before displaying errors.
-- This design greatly reduces token persistence, but no extension can guarantee protection if the browser profile, operating system, or another privileged extension is compromised.
-
-## Safari
-
-Safari Web Extensions are distributed through an Xcode app target. On macOS with Xcode installed:
+Safari Web Extensions are distributed through an Xcode app target:
 
 ```bash
 npm run build:safari
 ```
 
-Open the generated Xcode project, choose your signing team and bundle identifier, then run the containing app. Provider OAuth credentials and redirects must match the Safari bundle you sign.
+Open the generated Xcode project, choose your signing team and bundle identifier, then run the containing app.
 
-## Architecture
+## First use
 
-- `content.js` injects an isolated Shadow DOM sidebar and reads/writes Excalidraw's native local scene stores.
-- `shared/core.js` owns deterministic scene hashing, folder/path mapping, and deletion-safe workspace transforms.
-- `background.js` keeps OAuth tokens away from page DOM and performs provider API requests.
-- `.excalidraw-sync.json` records the exact GitHub paths managed by the extension.
+1. Open [Excalidraw](https://excalidraw.com/).
+2. Select the **ExcaliSync** launcher near the upper-right of the canvas. On a fresh installation it pulses until its first use.
+3. Create a folder and a drawing, or import an existing `.excalidraw` file.
+4. Draw normally. ExcaliSync saves the active scene according to your autosave preference.
+5. Select another drawing in the sidebar. The current drawing is saved first, the new scene opens in place, and the sidebar stays visible.
+6. Open **Settings** to choose saving, appearance, local storage, and GitHub options. Settings save automatically.
 
-See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) for the data and trust boundaries.
+You can drag the launcher to another safe position on the canvas or move it with **Alt + Arrow keys**. If you hide the launcher or collapsed sidebar, select ExcaliSync from the browser toolbar to open it again.
 
-## Development status
+### Everyday controls
 
-This is an initial private alpha. Provider credentials are not bundled, and production OAuth/store review is still required before public distribution.
+- **New file / New folder** creates content in the selected folder.
+- **Search** filters files and folders.
+- **Sync now** saves all pending work and synchronizes GitHub when connected.
+- **Cmd + S** on macOS or **Ctrl + S** elsewhere triggers a local save and GitHub sync.
+- A file's **history** icon opens its GitHub versions.
+- A file's **link** icon uses Excalidraw's read-only Shareable Link export and copies it.
+- Folder menus provide creation, import, rename, move, ordering, and deletion actions.
+
+Save warnings stay neutral during the configured autosave window plus a 30-second grace period. A delayed item turns yellow, and red is reserved for the later stale limit configured in Settings. Hover or focus the warning icon to see the reason immediately.
+
+## GitHub synchronization
+
+GitHub sync is optional. ExcaliSync uses OAuth Device Flow, requests the `repo` scope so private repositories can work, and does not require a client secret.
+
+### Create a GitHub OAuth App
+
+Open **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**, then fill the form as follows:
+
+| GitHub field | What to enter |
+| --- | --- |
+| **Application name** | `ExcaliSync`, or another name you recognize |
+| **Homepage URL** | `https://excalidraw.com/` |
+| **Application description** | Optional: `Sync Excalidraw drawings to my GitHub repository.` |
+| **Redirect URI** | `https://excalidraw.com/` — GitHub requires the field even though Device Flow does not redirect to it |
+| **Allow wildcard matching** | Leave disabled |
+| **Enable Device Flow** | Enable |
+| **Expire user access tokens** | Keep enabled |
+
+Then:
+
+1. Select **Register application**.
+2. Copy the **Client ID**.
+3. Do **not** generate or paste a client secret into ExcaliSync.
+4. In ExcaliSync, open **Settings → GitHub**.
+5. Paste the Client ID and choose a repository name, visibility, and root folder.
+6. Select **Connect**.
+7. Enter the displayed one-time code on the GitHub page that opens.
+8. Return to Excalidraw. ExcaliSync creates the repository during the first synchronization if it does not already exist.
+
+The same setup guide is built into the GitHub Settings tab. See GitHub's official documentation for [creating an OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) and [authorizing with Device Flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow).
+
+> [!IMPORTANT]
+> A Client ID is public and cannot be meaningfully encrypted. A client secret must never be bundled in a browser extension. Access and refresh tokens are private: ExcaliSync keeps them in extension-owned storage and never writes them to drawings, Git commits, page DOM, or diagnostics.
+
+### Pull, Push, and Force push
+
+| Action | Behavior |
+| --- | --- |
+| **Pull** | Replaces this browser's local library with the GitHub workspace after confirmation. |
+| **Push** | Downloads GitHub first, merges compatible changes, then uploads only differences after confirmation. |
+| **Force push** | Makes this browser's library authoritative for ExcaliSync-managed paths. Requires explicit typed confirmation. |
+
+Files edited independently on different computers merge individually by their stable IDs and newest modification time. Deletion tombstones remain during the 30-day trash period so an offline computer does not recreate deleted content when it reconnects.
+
+To use another computer:
+
+1. Install ExcaliSync there.
+2. Connect the same GitHub account.
+3. Enter the same OAuth Client ID, repository name, and root folder.
+4. Use **Pull** when the GitHub workspace should initialize that browser.
+
+### Version history
+
+Every synchronized file has a history icon. Select it to:
+
+1. List commits that changed that specific file.
+2. Preview a historical version on the canvas without modifying the saved file.
+3. Confirm **Restore this version** when you want to make that scene current.
+
+The restored scene is saved as a new current change, preserving the normal synchronization flow.
+
+### Automatic history squash
+
+ExcaliSync can replace the default branch's older history with one baseline commit while preserving every current repository file. It is enabled by default every 30 days and can be changed from 1 to 365 days.
+
+Squashing permanently resets the repository's commit ancestry and starts per-file history again from the new baseline. Traditional Git clones may need to reset or clone again. Disable this option if long-term Git commit history matters more than keeping the repository compact.
+
+## Local storage and recovery
+
+ExcaliSync maintains:
+
+1. The extension's browser workspace.
+2. A recovery copy in IndexedDB under the `excalidraw.com` origin.
+3. Optionally, ordinary files under `~/.excalidraw-sync` through the native helper.
+
+The browser recovery copy allows a newly reinstalled extension to rediscover its library when site data still exists. It is best effort: clearing Excalidraw site data, deleting the browser profile, private browsing, or browser cleanup can remove it.
+
+### Install the macOS disk helper
+
+Browser extensions cannot write arbitrary home-directory files directly. After loading the unpacked Chromium build, copy its extension ID from the extensions page and run:
+
+```bash
+./native-host/install-macos.sh YOUR_32_CHARACTER_EXTENSION_ID
+```
+
+Reload the extension. The helper is restricted to `~/.excalidraw-sync`, stores no OAuth credentials, and provides:
+
+- drawing and folder copies in the local vault
+- `.trash` backups retained for 30 days
+- sanitized error-only `.logs` retained for 7 days
+
+Open **Settings → Storage → Open vault** to reveal the folder in Finder. Without the helper, the same control opens the browser recovery vault.
+
+### Trash and deletion
+
+Deleting a file or folder requires confirmation. On touch devices, swiping left only requests deletion; it never deletes immediately. Keyboard and desktop users always have an accessible delete control.
+
+Deleted items disappear from the active library but preserve their original names and tree structure in **Settings → Trash** for 30 days. You can restore an individual file or an entire folder. **Delete files** is a separate destructive action that requires typing `delete` exactly.
+
+## Privacy and security
+
+- Drawings remain local unless you explicitly connect GitHub.
+- GitHub requests use HTTPS.
+- Credentials are never included in exported diagrams, repository content, or diagnostic logs.
+- Error logs sanitize token-like values before writing.
+- The extension does not include analytics or advertising.
+- No browser extension can protect secrets from a compromised operating system, browser profile, or privileged malicious extension.
+
+Read [PRIVACY.md](PRIVACY.md) for data handling and [SECURITY.md](SECURITY.md) for the threat model and responsible disclosure guidance.
+
+## Browser support
+
+| Browser | Extension package | GitHub sync | Disk helper |
+| --- | --- | --- | --- |
+| Chrome / Edge / Opera / Brave | Chromium Manifest V3 | Yes | macOS |
+| Firefox | Firefox Manifest V3-compatible build | Yes | Not currently packaged |
+| Safari | Xcode conversion | Yes | Not currently packaged |
+
+Browser-store review, signing, and distribution are still required before production installation.
+
+## Development
+
+```bash
+npm ci
+npm test
+npm run check
+npm run build
+```
+
+The project intentionally uses a small, dependency-light architecture:
+
+| Path | Responsibility |
+| --- | --- |
+| `content.js` | Shadow DOM sidebar, Excalidraw integration, save orchestration, and UI |
+| `background.js` | OAuth, GitHub API operations, token isolation, and synchronization |
+| `shared/core.js` | Workspace transforms, hashing, paths, merging, and retention rules |
+| `shared/ui-events.js` | Testable interaction and recovery behavior |
+| `shared/i18n.js` | Interface translations |
+| `native-host/` | Optional local-disk bridge |
+| `test/` | Node-based regression suite |
+
+Every reproduced bug fix must include a focused automated regression test that simulates the original failure. See [AGENTS.md](AGENTS.md) for the repository's interaction and testing rules.
+
+## Contributing
+
+Contributions are welcome:
+
+1. Search the [existing issues](https://github.com/thiagoheron1/Excalidraw-Sync/issues).
+2. Open an issue for significant behavior or design changes before investing in a large implementation.
+3. Create a focused branch and keep unrelated changes separate.
+4. Add or update tests for behavior changes.
+5. Run `npm test`, `npm run check`, and `npm run build`.
+6. Open a pull request that explains the user-facing change and its verification.
+
+Useful contribution areas include browser-specific validation, accessibility, translations, native helpers for additional operating systems, performance, and security review.
+
+## License
+
+ExcaliSync is available under the [MIT License](LICENSE).
+
+ExcaliSync is an independent open-source project and is not affiliated with or endorsed by Excalidraw or GitHub. Excalidraw and GitHub are trademarks of their respective owners.
