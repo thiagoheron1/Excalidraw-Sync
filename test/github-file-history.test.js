@@ -101,11 +101,36 @@ test("syncing a restored version uploads only that drawing and the workspace ind
 test("every file exposes GitHub history with preview and confirmed restore", () => {
   assert.match(content, /data-action="file-history"/);
   assert.match(content, /async function openFileHistory/);
-  assert.match(content, /Preview this version/);
+  assert.match(content, /Review version/);
   assert.match(content, /Restore this version/);
   assert.match(content, /ExcalidrawSyncCore\.restoreFileVersion/);
   assert.match(background, /case "github:fileHistory"/);
   assert.match(background, /case "github:fileVersion"/);
   assert.match(background, /\/commits\?sha=/);
   assert.match(background, /path=\$\{encodeURIComponent\(file\.path\)\}/);
+});
+
+test("every GitHub history row progressively renders its drawing preview", () => {
+  assert.match(content, /class="history-version-preview"[\s\S]*data-history-preview-sha="\$\{escapeHtml\(commit\.sha\)\}"/);
+  assert.match(content, /async function loadHistoryVersionPreviews/);
+  assert.match(content, /type: "github:fileVersion"[\s\S]*sha: commit\.sha/);
+  assert.match(content, /conflictScenePreview\(\{ entry: \{ scene: version\.scene \} \}\)/);
+  assert.match(content, /Preview is fitted to show the complete drawing\./);
+});
+
+test("revision history clearly distinguishes the latest version and the restore decision", () => {
+  assert.match(content, /history\.commits\.map\(\(commit, index\)/);
+  assert.match(content, /history-version-latest/);
+  assert.match(content, /Latest on GitHub/);
+  assert.match(content, /class="history-version-meta"/);
+  assert.match(content, /class="history-restore-notice"/);
+  assert.match(content, /Restoring creates a new current version/);
+  assert.match(content, /class="history-restore-actions"/);
+});
+
+test("drawing previews stay contained inside their revision cards", () => {
+  assert.match(content, /\.history-version \{[^}]*overflow: hidden;/);
+  assert.match(content, /\.history-version-preview \{[^}]*height: 118px;[^}]*overflow: hidden;/);
+  assert.match(content, /\.history-version-preview \.conflict-scene-preview \{[^}]*min-height: 0;[^}]*max-height: 118px;/);
+  assert.match(content, /\.history-version-preview \.conflict-scene-preview svg \{[^}]*max-height: 100%;/);
 });

@@ -593,26 +593,52 @@
     .conflict-scene-preview svg { display: block; width: 100%; height: 100%; }
     .conflict-preview-empty { padding: 14px; text-align: center; font-size: 10px; }
     .conflict-preview-note { display: block; padding: 0 10px 10px; color: var(--muted); font-size: 9.5px; }
-    .history-dialog { width: min(520px, 94vw); padding: 16px; }
-    .history-dialog-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
-    .history-dialog-header > div { min-width: 0; flex: 1; }
-    .history-dialog-header h2 { font-size: 17px; }
-    .history-dialog-header p { margin: 0; font-size: 11px; overflow-wrap: anywhere; }
-    .history-list { display: grid; gap: 7px; max-height: min(58vh, 520px); overflow-y: auto; padding: 1px; }
-    .history-version { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 58px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); padding: 9px 10px; text-align: left; cursor: pointer; }
-    .history-version:hover, .history-version:focus-visible { border-color: var(--accent); background: var(--active-bg); outline: none; }
+    .history-dialog { display: flex; width: min(800px, 96vw); max-height: min(88vh, 820px); padding: 0; overflow: hidden; flex-direction: column; }
+    .history-dialog-header { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 16px 17px 13px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, var(--surface), var(--surface-2)); }
+    .history-dialog-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: var(--active-bg); color: var(--accent-link); }
+    .history-dialog-title { min-width: 0; }
+    .history-dialog-title h2 { margin: 0; font-size: 17px; letter-spacing: -.015em; }
+    .history-dialog-title p { margin: 2px 0 0; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-count { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); padding: 5px 8px; font-size: 9.5px; font-weight: 650; white-space: nowrap; }
+    .history-dialog-intro { margin: 0; padding: 11px 17px; border-bottom: 1px solid var(--border); background: var(--dialog-bg); color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+    .history-list { display: grid; gap: 9px; min-height: 0; overflow-y: auto; padding: 12px 17px 16px; background: var(--surface-2); }
+    .history-version { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, 44%); align-items: stretch; gap: 13px; width: 100%; min-height: 148px; overflow: hidden; border: 1px solid var(--border); border-radius: 13px; background: var(--surface); color: var(--text); padding: 10px; text-align: left; cursor: pointer; box-shadow: 0 2px 8px rgba(20,20,35,.035); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease, background .16s ease; }
+    .history-version:hover { border-color: var(--accent); box-shadow: 0 7px 20px rgba(63,58,150,.11); transform: translateY(-1px); }
+    .history-version:focus-visible { border-color: var(--accent); outline: 3px solid rgba(124,120,236,.25); outline-offset: 1px; }
+    .history-version-latest { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); }
+    .history-version-main { display: flex; min-width: 0; flex-direction: column; justify-content: space-between; gap: 10px; padding: 4px 2px 3px 4px; }
     .history-version-copy { min-width: 0; }
-    .history-version-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
-    .history-version-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: 9.5px; }
-    .history-version-action { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-link); font-size: 10px; font-weight: 650; white-space: nowrap; }
+    .history-version-heading { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .history-version-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .history-latest-badge { flex: 0 0 auto; border-radius: 999px; background: var(--active-bg); color: var(--accent-link); padding: 3px 6px; font-size: 8.5px; font-weight: 700; letter-spacing: .02em; }
+    .history-version-meta { display: grid; gap: 5px; margin-top: 9px; }
+    .history-version-meta span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: var(--muted); font-size: 9.5px; }
+    .history-version-meta svg { flex: 0 0 auto; }
+    .history-version-meta code { overflow: hidden; color: var(--accent-link); font: 9px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; }
+    .history-version-action { display: inline-flex; width: fit-content; align-items: center; gap: 6px; border-radius: 7px; background: var(--active-bg); color: var(--accent-link); padding: 6px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .history-version-visual { display: grid; min-width: 0; grid-template-rows: auto 1fr; gap: 5px; }
+    .history-preview-label { color: var(--muted); font-size: 8.5px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+    .history-version-preview { display: grid; min-width: 0; height: 118px; overflow: hidden; align-self: start; }
+    .history-version-preview .conflict-scene-preview { aspect-ratio: auto; min-height: 0; height: 118px; max-height: 118px; overflow: hidden; border-radius: 10px; background: #f8f8fb; }
+    .history-version-preview .conflict-scene-preview svg { width: 100%; height: 100%; max-height: 100%; }
+    .history-version-preview[aria-busy="true"] .conflict-scene-preview { background: linear-gradient(110deg, #f3f3f7 25%, #fff 42%, #f3f3f7 58%); background-size: 240% 100%; animation: history-preview-loading 1.35s ease-in-out infinite; }
+    @keyframes history-preview-loading { to { background-position-x: -240%; } }
     .history-empty { padding: 20px 10px; border: 1px dashed var(--border); border-radius: 10px; color: var(--muted); font-size: 11px; text-align: center; }
-    .history-preview-layer { place-items: end center; padding-bottom: 24px; background: transparent; }
-    .history-preview-bar { width: min(620px, 94vw); border: 1px solid var(--accent); border-radius: 14px; background: var(--dialog-bg); padding: 13px 14px; box-shadow: 0 20px 70px var(--dialog-shadow); }
-    .history-preview-copy { display: flex; align-items: flex-start; gap: 9px; }
-    .history-preview-copy svg { flex: 0 0 auto; color: var(--accent); }
-    .history-preview-copy strong { display: block; font-size: 12px; }
-    .history-preview-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.35; }
-    .history-preview-bar .dialog-actions { margin-top: 11px; }
+    .history-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 17px; border-top: 1px solid var(--border); background: var(--dialog-bg); }
+    .history-dialog-footer small { color: var(--muted); font-size: 9.5px; }
+    .history-preview-layer { place-items: end center; padding: 20px 20px 24px; background: linear-gradient(to top, rgba(12,12,18,.22), transparent 55%); }
+    .history-preview-bar { width: min(690px, 96vw); overflow: hidden; border: 1px solid var(--accent); border-radius: 16px; background: var(--dialog-bg); box-shadow: 0 24px 80px var(--dialog-shadow); }
+    .history-preview-copy { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: center; gap: 10px; padding: 13px 15px 10px; }
+    .history-preview-copy > svg { width: 38px; height: 38px; padding: 9px; border-radius: 10px; background: var(--active-bg); color: var(--accent); }
+    .history-preview-eyebrow { display: block; margin-bottom: 2px; color: var(--accent-link); font-size: 8.5px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+    .history-preview-copy strong { display: block; font-size: 12.5px; }
+    .history-preview-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+    .history-preview-meta span { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; background: var(--surface-2); color: var(--muted); padding: 4px 7px; font-size: 9px; }
+    .history-preview-meta code { color: var(--accent-link); font: inherit; }
+    .history-restore-notice { display: flex; align-items: flex-start; gap: 8px; margin: 0 15px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); color: var(--muted); padding: 8px 10px; font-size: 9.5px; line-height: 1.4; }
+    .history-restore-notice svg { flex: 0 0 auto; color: var(--accent-link); }
+    .history-restore-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 11px; padding: 0 15px 14px; }
+    .history-restore-actions .button.primary { min-width: 150px; }
     .menu-root { position: fixed; inset: 0; z-index: 2147483001; pointer-events: none; }
     .action-dropdown { position: fixed; min-width: 190px; max-width: min(260px, calc(100vw - 16px)); padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--dialog-bg); box-shadow: 0 14px 38px var(--dialog-shadow); color: var(--text); pointer-events: auto; font: 11px/1.35 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     .action-dropdown button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 7px; background: transparent; color: inherit; padding: 7px 9px; text-align: left; cursor: pointer; }
@@ -625,6 +651,17 @@
       .launcher { right: 8px; top: 70px; width: 60px; min-width: 60px; max-width: 60px; height: 58px; min-height: 58px; max-height: 58px; }
       .panel { width: min(350px, 94vw); }
       .row-action { width: 34px; height: 34px; }
+      .history-version { grid-template-columns: 1fr; }
+      .history-version-preview { height: 145px; }
+      .history-version-preview .conflict-scene-preview { height: 145px; max-height: 145px; }
+      .history-dialog-header { grid-template-columns: 34px minmax(0, 1fr); }
+      .history-count { display: none; }
+      .history-dialog-intro { display: none; }
+      .history-dialog-footer small { display: none; }
+      .history-dialog-footer { justify-content: flex-end; }
+      .history-preview-layer { padding: 10px; }
+      .history-restore-actions { display: grid; grid-template-columns: 1fr 1fr; }
+      .history-restore-actions .button.primary { min-width: 0; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -1876,26 +1913,87 @@
     }).format(date);
   }
 
-  function showFileHistoryDialog(file, history) {
+  function historyVersionForCommit(fileId, commit, versionCache) {
+    let request = versionCache.get(commit.sha);
+    if (!request) {
+      request = sendMessage({
+        type: "github:fileVersion",
+        workspace: state.workspace,
+        fileId,
+        sha: commit.sha,
+      });
+      versionCache.set(commit.sha, request);
+      request.catch(() => versionCache.delete(commit.sha));
+    }
+    return request;
+  }
+
+  async function loadHistoryVersionPreviews(layer, fileId, history, versionCache) {
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < history.commits.length) {
+        const commit = history.commits[nextIndex];
+        nextIndex += 1;
+        const slot = [...layer.querySelectorAll("[data-history-preview-sha]")]
+          .find((element) => element.dataset.historyPreviewSha === commit.sha);
+        if (!slot) continue;
+        try {
+          const version = await historyVersionForCommit(fileId, commit, versionCache);
+          if (!slot.isConnected) continue;
+          replaceMarkup(slot, conflictScenePreview({ entry: { scene: version.scene } }));
+          slot.setAttribute("aria-busy", "false");
+          localizeUi(slot);
+        } catch (_error) {
+          if (!slot.isConnected) continue;
+          replaceMarkup(slot, '<div class="conflict-scene-preview"><span class="conflict-preview-empty">Deleted or unavailable</span></div>');
+          slot.setAttribute("aria-busy", "false");
+          localizeUi(slot);
+        }
+      }
+    };
+    const workerCount = Math.min(3, history.commits.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  }
+
+  function showFileHistoryDialog(file, history, versionCache) {
     return new Promise((resolve) => {
       const layer = document.createElement("div");
       layer.className = "dialog-layer";
       layer._resolve = resolve;
       const versions = history.commits.length
-        ? history.commits.map((commit) => `
-          <button class="history-version" type="button" data-history-sha="${escapeHtml(commit.sha)}">
-            <span class="history-version-copy"><strong>${escapeHtml(commit.message)}</strong><small>${escapeHtml(formatHistoryTime(commit.committedAt))} · ${escapeHtml(commit.author)} · ${escapeHtml(commit.shortSha)}</small></span>
-            <span class="history-version-action">${icon("history", 14)} Preview this version</span>
+        ? history.commits.map((commit, index) => `
+          <button class="history-version ${index === 0 ? "history-version-latest" : ""}" type="button" data-history-sha="${escapeHtml(commit.sha)}">
+            <span class="history-version-main">
+              <span class="history-version-copy">
+                <span class="history-version-heading"><strong data-i18n-skip>${escapeHtml(commit.message)}</strong>${index === 0 ? '<span class="history-latest-badge">Latest on GitHub</span>' : ""}</span>
+                <span class="history-version-meta">
+                  <span>${icon("history", 12)}<span data-i18n-skip>${escapeHtml(formatHistoryTime(commit.committedAt))}</span></span>
+                  <span>Commit <code data-i18n-skip>${escapeHtml(commit.shortSha)}</code></span>
+                  <span data-i18n-skip>${escapeHtml(commit.author)}</span>
+                </span>
+              </span>
+              <span class="history-version-action">${icon("external", 13)} Review version</span>
+            </span>
+            <span class="history-version-visual">
+              <span class="history-preview-label">Drawing preview</span>
+              <span class="history-version-preview" data-history-preview-sha="${escapeHtml(commit.sha)}" aria-busy="true" aria-label="Drawing preview"><span class="conflict-scene-preview"></span></span>
+            </span>
           </button>`).join("")
         : '<div class="history-empty">No GitHub versions were found for this file yet. Sync it first, then make another edit to create history.</div>';
       replaceMarkup(layer, `
         <section class="dialog history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-dialog-title">
-          <div class="history-dialog-header">${icon("history", 20)}<div><h2 id="history-dialog-title">Version history</h2><p><span data-i18n-skip>${escapeHtml(file.name)}</span> · <span data-i18n-skip>${escapeHtml(history.path)}</span></p></div></div>
+          <div class="history-dialog-header">
+            <span class="history-dialog-icon">${icon("history", 20)}</span>
+            <div class="history-dialog-title"><h2 id="history-dialog-title">Version history</h2><p><span data-i18n-skip>${escapeHtml(file.name)}</span> · <span data-i18n-skip>${escapeHtml(history.path)}</span></p></div>
+            <span class="history-count"><span data-i18n-skip>${history.commits.length}</span> versions</span>
+          </div>
+          <p class="history-dialog-intro">Select a version to preview it on the canvas or restore it as the current drawing.</p>
           <div class="history-list">${versions}</div>
-          <div class="dialog-actions"><button class="button cancel" type="button">Close</button></div>
+          <div class="history-dialog-footer"><small>Preview is fitted to show the complete drawing.</small><button class="button cancel" type="button">Close</button></div>
         </section>`);
       localizeUi(layer);
       elements.modalRoot.append(layer);
+      void loadHistoryVersionPreviews(layer, file.id, history, versionCache);
       layer.querySelector(".cancel").addEventListener("click", () => closeDialog(null));
       layer.addEventListener("click", (event) => {
         const version = event.target.closest("[data-history-sha]");
@@ -1916,8 +2014,17 @@
       layer._resolve = resolve;
       replaceMarkup(layer, `
         <section class="history-preview-bar" role="dialog" aria-modal="true" aria-labelledby="history-preview-title">
-          <div class="history-preview-copy">${icon("history", 20)}<div><strong id="history-preview-title">Previewing ${escapeHtml(file.name)}</strong><small>${escapeHtml(formatHistoryTime(commit.committedAt))} · ${escapeHtml(commit.message)}. This preview is read-only and has not changed your saved file.</small></div></div>
-          <div class="dialog-actions"><button class="button cancel" type="button">Back to history</button><button class="button primary restore" type="button">Restore this version</button></div>
+          <div class="history-preview-copy">${icon("history", 20)}<div>
+            <span class="history-preview-eyebrow">Historical preview</span>
+            <strong id="history-preview-title">Previewing <span data-i18n-skip>${escapeHtml(file.name)}</span></strong>
+            <div class="history-preview-meta">
+              <span data-i18n-skip>${escapeHtml(formatHistoryTime(commit.committedAt))}</span>
+              <span>Commit <code data-i18n-skip>${escapeHtml(commit.shortSha)}</code></span>
+              <span data-i18n-skip>${escapeHtml(commit.message)}</span>
+            </div>
+          </div></div>
+          <div class="history-restore-notice">${icon("alert", 15)}<span><strong>This preview is read-only. Your saved file has not changed.</strong><br>Restoring creates a new current version. Your other files and GitHub history stay unchanged.</span></div>
+          <div class="history-restore-actions"><button class="button cancel" type="button">Back to history</button><button class="button primary restore" type="button">${icon("history", 14)} Restore this version</button></div>
         </section>`);
       localizeUi(layer);
       elements.modalRoot.append(layer);
@@ -1950,7 +2057,8 @@
     } finally {
       setBusy(false, "Saved locally");
     }
-    let selectedSha = await showFileHistoryDialog(file, history);
+    const versionCache = new Map();
+    let selectedSha = await showFileHistoryDialog(file, history, versionCache);
     while (selectedSha) {
       const commit = history.commits.find((item) => item.sha === selectedSha);
       if (!commit) return;
@@ -1960,12 +2068,7 @@
       let restored = false;
       setBusy(true, "Loading version preview…");
       try {
-        const version = await sendMessage({
-          type: "github:fileVersion",
-          workspace: state.workspace,
-          fileId,
-          sha: selectedSha,
-        });
+        const version = await historyVersionForCommit(fileId, commit, versionCache);
         state.historyPreview = true;
         await applySceneInPlace(version.scene);
         setOpen(false);
@@ -1994,7 +2097,7 @@
         render();
       }
       if (restored) return;
-      selectedSha = await showFileHistoryDialog(file, history);
+      selectedSha = await showFileHistoryDialog(file, history, versionCache);
     }
   }
 

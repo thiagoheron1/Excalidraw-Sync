@@ -104,6 +104,14 @@ test("every current sidebar section and option has a translation in every suppor
     "Deleted",
     "Not available",
     "Drawing preview",
+    "Latest on GitHub",
+    "Review version",
+    "Previewing",
+    "versions",
+    "Select a version to preview it on the canvas or restore it as the current drawing.",
+    "Historical preview",
+    "This preview is read-only. Your saved file has not changed.",
+    "Restoring creates a new current version. Your other files and GitHub history stay unchanged.",
   ];
 
   for (const language of ["pt-BR", "es", "fr", "de"]) {
