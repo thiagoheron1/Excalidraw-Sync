@@ -7,7 +7,7 @@ const { spawnSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
 const dist = path.join(root, "dist");
 const sourceFiles = ["background.js", "content.js", "vault.html", "vault.js", "LICENSE", "README.md"];
-const sourceDirectories = ["shared", "icons", "_locales"];
+const sourceDirectories = ["shared", "icons", "assets", "_locales"];
 
 function copyTarget(target, manifestTransform = (value) => value) {
   const output = path.join(dist, target);

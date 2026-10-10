@@ -149,7 +149,7 @@ test("primary file controls use the requested order and expose one-click sync", 
   assert.ok(filesView.indexOf('class="quick-grid"') < filesView.indexOf('class="sync-row'));
   assert.ok(filesView.indexOf('class="sync-row') < filesView.indexOf('class="search-wrap"'));
   assert.match(filesView, /aria-label="Sync all documents now"/);
-  assert.match(content, /class="icon-button header-sync"/);
+  assert.doesNotMatch(content, /class="icon-button header-sync"/);
 });
 
 test("primary file actions render as stacked full-width menu rows", () => {

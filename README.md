@@ -57,7 +57,7 @@ Browser workspace ──► Excalidraw-site recovery copy
       └─────────────► GitHub repository (optional)
 ```
 
-The browser workspace is always written first and remains the offline working copy. GitHub becomes the shared cloud authority only when you enable it. A normal Push downloads the managed index, merges files and folders by stable ID and modification time, applies deletion tombstones, and uploads only actual differences.
+The browser workspace is always written first and remains the offline working copy. GitHub becomes the shared cloud authority only when you enable it. Before every automatic or manual upload, ExcaliSync downloads the current GitHub workspace. Remote-only and local-only changes merge automatically. If the same item changed on both sides since their last shared version, uploading pauses and asks which conflicting version to keep.
 
 ## Install from source
 
@@ -176,10 +176,10 @@ The same setup guide is built into the GitHub Settings tab. See GitHub's officia
 | Action | Behavior |
 | --- | --- |
 | **Pull** | Replaces this browser's local library with the GitHub workspace after confirmation. |
-| **Push** | Downloads GitHub first, merges compatible changes, then uploads only differences after confirmation. |
+| **Push** | Downloads GitHub first, merges compatible changes, asks about conflicts, then uploads only differences after confirmation. |
 | **Force push** | Makes this browser's library authoritative for ExcaliSync-managed paths. Requires explicit typed confirmation. |
 
-Files edited independently on different computers merge individually by their stable IDs and newest modification time. Deletion tombstones remain during the 30-day trash period so an offline computer does not recreate deleted content when it reconnects.
+Files edited independently on different computers merge individually by stable ID. ExcaliSync stores a local three-way synchronization baseline to distinguish changes made only on this device, only on GitHub, or on both. When both sides changed the same file or folder, choose either the GitHub version or this device's version; unrelated changes are still merged. Deletion tombstones remain during the 30-day trash period so an offline computer does not recreate deleted content when it reconnects.
 
 To use another computer:
 

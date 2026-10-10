@@ -63,12 +63,18 @@
     unsyncedSince: null,
     lastSavedAt: null,
     lastSyncedAt: null,
+    syncBaseline: null,
+    pendingSyncConflicts: [],
+    pendingConflictResolution: null,
+    syncConflictPromptOpen: false,
     notifications: [],
     nativeStorage: { available: false, root: "~/.excalidraw-sync" },
     draggedFileId: null,
     draggedFolderId: null,
     importFolderId: null,
     historyPreview: false,
+    githubCommitCheckInFlight: false,
+    githubDirectionNoticeKey: null,
   };
   let settingsSaveTimer = null;
   let settingsSaveQueue = Promise.resolve();
@@ -86,6 +92,14 @@
     rootHost.lang = state.language;
     const sidebarToggleText = shadow.querySelector(".sidebar-toggle-label");
     if (sidebarToggleText) sidebarToggleText.textContent = t("Collapse");
+    elements.launcher.setAttribute("aria-label", t("Open ExcaliSync. Drag to move."));
+    elements.launcher.setAttribute("title", t("Drag to move · Click to open"));
+    elements.panel.setAttribute("aria-label", t("Excalidraw Sync sidebar"));
+    elements.footerStatus.textContent = t(state.status);
+    const sidebarToggle = shadow.querySelector(".sidebar-toggle");
+    const sidebarToggleLabel = state.open ? "Collapse sidebar" : "Expand sidebar";
+    sidebarToggle?.setAttribute("aria-label", t(sidebarToggleLabel));
+    sidebarToggle?.setAttribute("title", t(sidebarToggleLabel));
   }
 
   function apiCall(target, method, ...args) {
@@ -164,6 +178,9 @@
         unsyncedSince: state.unsyncedSince,
         lastSavedAt: state.lastSavedAt,
         lastSyncedAt: state.lastSyncedAt,
+        syncBaseline: state.syncBaseline,
+        pendingSyncConflicts: state.pendingSyncConflicts,
+        pendingConflictResolution: state.pendingConflictResolution,
         view: state.view,
         open: state.open,
         providerFormDraft,
@@ -187,7 +204,6 @@
 
   function icon(name, size = 20) {
     const paths = {
-      logo: '<path d="M4 4h6l2 2h8v12H4z"/><path d="m7 12 2.2 2.2L16 8.5"/>',
       menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
       close: '<path d="m6 6 12 12M18 6 6 18"/>',
       search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
@@ -215,6 +231,11 @@
       history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5M12 7v5l3 2"/>',
     };
     return `<svg aria-hidden="true" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ""}</svg>`;
+  }
+
+  function brandLogo(size = 24) {
+    const source = extensionApi.runtime.getURL("assets/excalisync-logo.png");
+    return `<img class="brand-logo" src="${escapeHtml(source)}" width="${size}" height="${size}" alt="" aria-hidden="true">`;
   }
 
   function providerIcon(name, size = 22) {
@@ -292,6 +313,8 @@
       font-size: 9px; line-height: 1; font-weight: 650; letter-spacing: .015em;
       text-rendering: optimizeLegibility;
     }
+    .brand-logo { display: block; flex: 0 0 auto; object-fit: contain; border-radius: 22%; }
+    .launcher > .brand-logo { width: 32px; height: 32px; box-shadow: 0 3px 10px rgba(30,27,75,.28); }
     .launcher:hover { transform: translateY(-1px); background: var(--accent-hover); }
     .launcher.needs-introduction {
       animation: launcher-introduction 1.45s ease-in-out infinite;
@@ -318,7 +341,7 @@
     .panel.collapsed { background: var(--bg); color: var(--text); border-right-color: var(--border); box-shadow: 8px 0 24px var(--panel-shadow); cursor: pointer; }
     .panel.collapsed.rail-hidden { transform: translateX(-102%); pointer-events: none; }
     .collapsed-brand { position: absolute; z-index: 2; top: 16px; right: 0; bottom: 56px; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--text); pointer-events: none; }
-    .collapsed-brand svg { flex: 0 0 auto; }
+    .collapsed-brand .brand-logo { width: 24px; height: 24px; }
     .collapsed-brand span { writing-mode: vertical-rl; text-orientation: mixed; font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif; font-size: 10px; line-height: 1; font-weight: 700; letter-spacing: .045em; }
     .panel.open .collapsed-brand { display: none; }
     .panel:not(.open) .panel-header, .panel:not(.open) .panel-body, .panel:not(.open) .panel-footer { visibility: hidden; pointer-events: none; }
@@ -330,7 +353,8 @@
     .panel:not(.open) .sidebar-toggle svg { transform: rotate(-90deg); }
     .panel.open .sidebar-toggle svg { transform: rotate(90deg); }
     .panel-header { display: flex; align-items: center; gap: 9px; padding: 15px 14px 13px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--surface), var(--bg)); }
-    .brand-mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: white; background: linear-gradient(145deg, #7c78ec, var(--accent-solid)); box-shadow: 0 5px 16px rgba(71,65,170,.22); }
+    .brand-mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; }
+    .brand-mark .brand-logo { width: 34px; height: 34px; box-shadow: 0 5px 16px rgba(71,65,170,.22); }
     .brand-home { min-width: 0; flex: 1; display: flex; align-items: center; gap: 9px; margin: -5px; padding: 5px; border: 0; border-radius: 11px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
     .brand-home:hover, .brand-home:focus-visible { background: var(--surface-2); outline: none; }
     .brand { min-width: 0; flex: 1; }
@@ -338,8 +362,6 @@
     .brand span { display: block; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .icon-button { border: 0; background: transparent; border-radius: 8px; width: 32px; height: 32px; display: inline-grid; place-items: center; cursor: pointer; }
     .icon-button:hover { background: var(--surface-2); }
-    .notification-button { position: relative; }
-    .notification-badge { position: absolute; right: 1px; top: 1px; min-width: 16px; height: 16px; padding: 0 4px; border: 2px solid var(--bg); border-radius: 99px; background: var(--danger); color: white; display: grid; place-items: center; font-size: 9px; font-weight: 800; }
     .panel-body { flex: 1; overflow: auto; padding: 12px 13px 20px; scrollbar-width: thin; }
     .search-wrap { position: relative; margin: 0 3px 12px; }
     .search-wrap svg { position: absolute; left: 11px; top: 10px; color: var(--muted); }
@@ -355,11 +377,12 @@
     .sync-row.stale { background: var(--danger-soft); color: var(--danger); border: 1px solid currentColor; }
     .sync-row span { flex: 1; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sync-row button { border: 0; background: var(--surface); color: var(--accent); cursor: pointer; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border-radius: 8px; }
-    .sync-row button:hover, .header-sync:hover { background: var(--surface-2); }
-    .header-sync.syncing svg { animation: spin .9s linear infinite; }
+    .sync-row button:hover { background: var(--surface-2); }
     .cloud-status { display: grid; grid-template-columns: 1fr; gap: 7px; margin: 0 3px 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
     .cloud-provider { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: center; padding: 4px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
     .cloud-provider.has-error { border-color: var(--error-border); background: var(--danger-soft); }
+    .cloud-provider.remote-ahead, .cloud-provider.both-changed { border-color: var(--error-border); background: var(--danger-soft); }
+    .cloud-provider.local-ahead { border-color: var(--accent); background: var(--active-bg); }
     .cloud-provider-main { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; padding: 4px; border: 0; border-radius: 7px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
     .cloud-provider-main:hover, .cloud-provider-main:focus-visible { background: var(--surface-2); outline: none; }
     .cloud-provider-copy { min-width: 0; }
@@ -554,6 +577,22 @@
     .dialog p { color: var(--muted); margin: 0 0 14px; font-size: 14px; }
     .dialog .field input, .dialog .field select { background: var(--dialog-input); }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .conflict-dialog { width: min(760px, 96vw); max-height: min(88vh, 780px); overflow: auto; }
+    .conflict-list { display: grid; gap: 12px; margin: 12px 0; }
+    .conflict-comparison { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+    .conflict-name { padding: 9px 11px; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .conflict-meta { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; }
+    .conflict-meta th, .conflict-meta td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; overflow-wrap: anywhere; }
+    .conflict-meta th { color: var(--muted); font-weight: 650; background: var(--surface-2); }
+    .conflict-meta th:first-child, .conflict-meta td:first-child { width: 92px; }
+    .conflict-meta code { font-size: 9.5px; color: var(--accent-link); }
+    .conflict-previews { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; }
+    .conflict-preview-column { min-width: 0; }
+    .conflict-preview-column > strong { display: block; margin-bottom: 5px; font-size: 10px; }
+    .conflict-scene-preview { display: grid; place-items: center; width: 100%; aspect-ratio: 1.35; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: #f8f8fb; color: #6b6b76; }
+    .conflict-scene-preview svg { display: block; width: 100%; height: 100%; }
+    .conflict-preview-empty { padding: 14px; text-align: center; font-size: 10px; }
+    .conflict-preview-note { display: block; padding: 0 10px 10px; color: var(--muted); font-size: 9.5px; }
     .history-dialog { width: min(520px, 94vw); padding: 16px; }
     .history-dialog-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
     .history-dialog-header > div { min-width: 0; flex: 1; }
@@ -603,10 +642,10 @@
   }
 
   replaceMarkup(shadow, `
-    <button class="launcher" type="button" aria-label="Open ExcaliSync. Drag to move." aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown" title="Drag to move · Click to open">${icon("logo", 24)}<span class="launcher-label">ExcaliSync</span></button>
+    <button class="launcher" type="button" aria-label="Open ExcaliSync. Drag to move." aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown" title="Drag to move · Click to open">${brandLogo(32)}<span class="launcher-label">ExcaliSync</span></button>
     <div class="backdrop" aria-hidden="true"></div>
     <aside class="panel collapsed" aria-label="Excalidraw Sync sidebar">
-      <div class="collapsed-brand" aria-hidden="true">${icon("logo", 22)}<span>ExcaliSync</span></div>
+      <div class="collapsed-brand" aria-hidden="true">${brandLogo(24)}<span>ExcaliSync</span></div>
       <button class="sidebar-toggle" type="button" data-action="toggle-sidebar" aria-label="Expand sidebar" aria-expanded="false" title="Expand sidebar">${icon("chevron", 18)}<span class="sidebar-toggle-label">Collapse</span></button>
       <header class="panel-header"></header>
       <main class="panel-body"></main>
@@ -754,6 +793,9 @@
       lastSavedAt: state.lastSavedAt,
       lastSyncedAt: state.lastSyncedAt,
       unsyncedSince: state.unsyncedSince,
+      syncBaseline: state.syncBaseline,
+      pendingSyncConflicts: state.pendingSyncConflicts,
+      pendingConflictResolution: state.pendingConflictResolution,
     });
   }
 
@@ -964,7 +1006,10 @@
       state.launcherAnchoredRight = false;
       rememberLauncherPosition(position);
     },
-    onActivate: () => setOpen(true, { home: true, acknowledge: true }),
+    onActivate: () => {
+      const opening = !state.open;
+      setOpen(opening, { home: opening, acknowledge: opening });
+    },
   });
 
   let launcherResizeTimer = null;
@@ -1237,15 +1282,165 @@
     return true;
   }
 
-  function scheduleCloudSync(delayMs = state.saveSettings.syncDelaySeconds * 1000) {
+  function scheduleCloudSync(
+    delayMs = state.saveSettings.syncDelaySeconds * 1000,
+    conflictResolution = null,
+  ) {
+    conflictResolution = conflictResolution || state.pendingConflictResolution;
     clearTimeout(state.syncTimer);
-    if (!hasConnectedCloud()) {
+    if (!hasConnectedCloud() || state.pendingSyncConflicts.length) {
       return;
     }
-    state.syncTimer = setTimeout(() => syncNow({ quiet: true }), delayMs);
+    state.syncTimer = setTimeout(() => syncNow({ quiet: true, conflictResolution }), delayMs);
   }
 
-  async function syncNow({ quiet = false } = {}) {
+  function conflictTimestamp(value) {
+    if (!value || Number.isNaN(new Date(value).getTime())) return t("Unknown");
+    return new Intl.DateTimeFormat(state.language, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
+  }
+
+  function conflictScenePreview(side) {
+    const scene = side?.entry?.scene;
+    if (!scene) {
+      return '<div class="conflict-scene-preview"><span class="conflict-preview-empty">Deleted or unavailable</span></div>';
+    }
+    const sceneElements = (scene.elements || []).filter((element) => !element?.isDeleted).slice(0, 300);
+    if (!sceneElements.length) {
+      return '<div class="conflict-scene-preview"><span class="conflict-preview-empty">Blank drawing</span></div>';
+    }
+    const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    const bounds = sceneElements.reduce((result, element) => {
+      const x = finite(element.x);
+      const y = finite(element.y);
+      const pointXs = (element.points || []).map((point) => x + finite(point?.[0]));
+      const pointYs = (element.points || []).map((point) => y + finite(point?.[1]));
+      const xs = [x, x + finite(element.width), ...pointXs];
+      const ys = [y, y + finite(element.height), ...pointYs];
+      result.minX = Math.min(result.minX, ...xs);
+      result.minY = Math.min(result.minY, ...ys);
+      result.maxX = Math.max(result.maxX, ...xs);
+      result.maxY = Math.max(result.maxY, ...ys);
+      return result;
+    }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+    const width = Math.max(1, bounds.maxX - bounds.minX);
+    const height = Math.max(1, bounds.maxY - bounds.minY);
+    const padding = Math.max(16, Math.max(width, height) * 0.08);
+    const fileMap = scene.files && typeof scene.files === "object" ? scene.files : {};
+    const renderElement = (element) => {
+      const x = finite(element.x);
+      const y = finite(element.y);
+      const elementWidth = Math.max(1, Math.abs(finite(element.width, 1)));
+      const elementHeight = Math.max(1, Math.abs(finite(element.height, 1)));
+      const stroke = escapeHtml(element.strokeColor || "#1b1b1f");
+      const fill = escapeHtml(element.backgroundColor && element.backgroundColor !== "transparent" ? element.backgroundColor : "none");
+      const strokeWidth = Math.max(1, finite(element.strokeWidth, 1));
+      const common = `stroke="${stroke}" stroke-width="${strokeWidth}" fill="${fill}" vector-effect="non-scaling-stroke"`;
+      if (element.type === "ellipse") {
+        return `<ellipse cx="${x + elementWidth / 2}" cy="${y + elementHeight / 2}" rx="${elementWidth / 2}" ry="${elementHeight / 2}" ${common}/>`;
+      }
+      if (element.type === "diamond") {
+        return `<polygon points="${x + elementWidth / 2},${y} ${x + elementWidth},${y + elementHeight / 2} ${x + elementWidth / 2},${y + elementHeight} ${x},${y + elementHeight / 2}" ${common}/>`;
+      }
+      if (["line", "arrow", "freedraw"].includes(element.type)) {
+        const points = (element.points || []).map((point) => `${x + finite(point?.[0])},${y + finite(point?.[1])}`).join(" ");
+        return points ? `<polyline points="${points}" ${common} fill="none"/>` : "";
+      }
+      if (element.type === "text") {
+        const text = String(element.text || element.originalText || "").slice(0, 120);
+        const fontSize = Math.max(8, finite(element.fontSize, 20));
+        return `<text x="${x}" y="${y + fontSize}" fill="${stroke}" font-size="${fontSize}" font-family="sans-serif">${escapeHtml(text)}</text>`;
+      }
+      if (element.type === "image") {
+        const imageData = fileMap[element.fileId]?.dataURL;
+        if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(String(imageData || ""))) {
+          return `<image x="${x}" y="${y}" width="${elementWidth}" height="${elementHeight}" href="${escapeHtml(imageData)}" preserveAspectRatio="xMidYMid meet"/>`;
+        }
+        return `<g><rect x="${x}" y="${y}" width="${elementWidth}" height="${elementHeight}" ${common}/><path d="M${x},${y} L${x + elementWidth},${y + elementHeight} M${x + elementWidth},${y} L${x},${y + elementHeight}" ${common} fill="none"/></g>`;
+      }
+      return `<rect x="${x}" y="${y}" width="${elementWidth}" height="${elementHeight}" rx="${Math.min(12, finite(element.roundness?.value, 3))}" ${common}/>`;
+    };
+    return `<div class="conflict-scene-preview" data-i18n-skip><svg viewBox="${bounds.minX - padding} ${bounds.minY - padding} ${width + padding * 2} ${height + padding * 2}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Drawing preview">${sceneElements.map(renderElement).join("")}</svg></div>`;
+  }
+
+  function conflictComparison(conflict) {
+    const localCommit = String(conflict.localCommitSha || "").slice(0, 7) || t("Not available");
+    const remoteCommit = String(conflict.remoteCommitSha || "").slice(0, 7) || t("Not available");
+    const sideValue = (side, field) => side
+      ? field === "updatedAt" ? conflictTimestamp(side.updatedAt) : t("Available")
+      : t("Deleted");
+    return `<section class="conflict-comparison">
+      <div class="conflict-name"><strong data-i18n-skip>${escapeHtml(conflict.name)}</strong></div>
+      <table class="conflict-meta">
+        <thead><tr><th>Compare</th><th>This device</th><th>GitHub</th></tr></thead>
+        <tbody>
+          <tr><th>Version</th><td>${escapeHtml(sideValue(conflict.local, "status"))}</td><td>${escapeHtml(sideValue(conflict.remote, "status"))}</td></tr>
+          <tr><th>Commit</th><td><code data-i18n-skip>${escapeHtml(localCommit)}</code><small>Known commit</small></td><td><code data-i18n-skip>${escapeHtml(remoteCommit)}</code><small>GitHub HEAD</small></td></tr>
+          <tr><th>Commit time</th><td data-i18n-skip>${escapeHtml(conflictTimestamp(conflict.localCommitAt))}</td><td data-i18n-skip>${escapeHtml(conflictTimestamp(conflict.remoteCommitAt))}</td></tr>
+          <tr><th>Drawing updated</th><td data-i18n-skip>${escapeHtml(sideValue(conflict.local, "updatedAt"))}</td><td data-i18n-skip>${escapeHtml(sideValue(conflict.remote, "updatedAt"))}</td></tr>
+        </tbody>
+      </table>
+      <div class="conflict-previews">
+        <div class="conflict-preview-column"><strong>This device</strong>${conflictScenePreview(conflict.local)}</div>
+        <div class="conflict-preview-column"><strong>GitHub</strong>${conflictScenePreview(conflict.remote)}</div>
+      </div>
+      <small class="conflict-preview-note">Preview is fitted to show the complete drawing.</small>
+    </section>`;
+  }
+
+  async function resolveSyncConflicts(conflicts = state.pendingSyncConflicts) {
+    if (!conflicts.length || state.syncConflictPromptOpen) return;
+    state.syncConflictPromptOpen = true;
+    const names = conflicts.slice(0, 4).map((conflict) => conflict.name).join(", ");
+    const remaining = conflicts.length > 4 ? ` and ${conflicts.length - 4} more` : "";
+    try {
+      const choice = await showFormDialog({
+        title: "Resolve GitHub sync conflict",
+        description: `Both this device and GitHub changed ${names}${remaining}. Non-conflicting files will still merge. Choose which version to keep for the conflicting items.`,
+        content: `<div class="conflict-list">${conflicts.map(conflictComparison).join("")}</div>`,
+        dialogClass: "conflict-dialog",
+        fields: [{
+          name: "resolution",
+          label: "Conflicting versions",
+          type: "select",
+          value: "remote",
+          options: [
+            { value: "remote", label: "Use GitHub's conflicting versions" },
+            { value: "local", label: "Keep this device's conflicting versions" },
+          ],
+        }],
+        confirmLabel: "Resolve and sync",
+      });
+      if (!choice) return;
+      if (!["local", "remote"].includes(choice.resolution)) return;
+      state.pendingSyncConflicts = [];
+      state.pendingConflictResolution = choice.resolution;
+      state.syncConflictPromptOpen = false;
+      await persistSaveState();
+      await syncNow({ quiet: false, conflictResolution: choice.resolution });
+    } finally {
+      state.syncConflictPromptOpen = false;
+    }
+  }
+
+  function pauseForSyncConflicts(conflicts) {
+    state.pendingSyncConflicts = conflicts;
+    state.pendingConflictResolution = null;
+    state.status = "GitHub sync conflict · choose which version to keep";
+    state.unsyncedSince ||= ExcalidrawSyncCore.nowIso();
+    addNotification("error", "GitHub sync conflict", `${conflicts.length} conflicting item${conflicts.length === 1 ? "" : "s"} need your choice before uploading.`);
+    void persistSaveState();
+    window.setTimeout(() => { void resolveSyncConflicts(conflicts); }, 0);
+  }
+
+  async function syncNow({ quiet = false, conflictResolution = null } = {}) {
+    conflictResolution = conflictResolution || state.pendingConflictResolution;
+    if (state.pendingSyncConflicts.length && !conflictResolution) {
+      await resolveSyncConflicts();
+      return;
+    }
     if (state.busy) {
       return;
     }
@@ -1255,8 +1450,18 @@
       const previousActive = state.workspace.files.find((file) => file.id === state.workspace.activeFileId);
       const previousActiveId = state.workspace.activeFileId;
       const previousActiveHash = previousActive?.hash;
-      const result = await sendMessage({ type: "sync:workspace", workspace: state.workspace });
+      const result = await sendMessage({
+        type: "sync:workspace",
+        workspace: state.workspace,
+        syncBaseline: state.syncBaseline,
+        conflictResolution,
+      });
       state.providers = result.providers;
+      const conflicts = result.result.github?.conflicts || [];
+      if (conflicts.length) {
+        pauseForSyncConflicts(conflicts);
+        return;
+      }
       if (result.workspace) {
         state.workspace = ExcalidrawSyncCore.normalizeWorkspace(result.workspace);
         ensureWorkspaceHasFile();
@@ -1271,10 +1476,10 @@
       const retryableFailure = [result.result.github]
         .find((providerResult) => providerResult?.retryable);
       if (retryableFailure) {
-        state.status = retryableFailure.message || "Cloud changed remotely · retrying…";
+        state.status = retryableFailure.message || "GitHub changed while syncing · pulling the latest version before retrying…";
         state.unsyncedSince ||= ExcalidrawSyncCore.nowIso();
         await persistSaveState();
-        scheduleCloudSync(5000);
+        scheduleCloudSync(5000, conflictResolution);
         if (!quiet) showToast(state.status);
         return;
       }
@@ -1283,11 +1488,15 @@
         throw new Error(errors.join(" "));
       }
       if (hasConnectedCloud()) {
+        markGitHubCommitStatusSynced();
         state.lastSyncedAt = ExcalidrawSyncCore.nowIso();
         for (const file of state.workspace.files) {
           file.syncedAt = state.lastSyncedAt;
         }
         state.unsyncedSince = null;
+        state.pendingSyncConflicts = [];
+        state.pendingConflictResolution = null;
+        state.syncBaseline = ExcalidrawSyncCore.workspaceSyncBaseline(state.workspace);
         await storageSet(WORKSPACE_KEY, state.workspace);
         await persistLocalVault();
       }
@@ -1384,15 +1593,16 @@
     elements.modalRoot.replaceChildren();
   }
 
-  function showFormDialog({ title, description = "", fields = [], confirmLabel = "Save", danger = false, autoSelectName = "" }) {
+  function showFormDialog({ title, description = "", content = "", fields = [], confirmLabel = "Save", danger = false, autoSelectName = "", dialogClass = "" }) {
     return new Promise((resolve) => {
       const layer = document.createElement("div");
       layer.className = "dialog-layer";
       layer._resolve = resolve;
       replaceMarkup(layer, `
-        <form class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <form class="dialog ${escapeHtml(dialogClass)}" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
           <h2 id="dialog-title">${escapeHtml(title)}</h2>
           ${description ? `<p>${escapeHtml(description)}</p>` : ""}
+          ${content}
           ${fields
             .map(
               (field) => `
@@ -2263,9 +2473,33 @@
       ? `Last sync ${formatRelativeTime(provider.lastSyncAt)}`
       : connected ? "Waiting for first sync" : "Not connected";
     const automaticLabel = automatic ? "Automatic sync on" : "Automatic sync off";
-    const statusMessage = hasError ? `${provider.lastError} · ${lastSync}` : lastSync;
+    const commitStatus = providerName === "github" ? provider?.commitStatus : null;
+    const commitDirection = providerName === "github"
+      ? ExcalidrawSyncCore.githubSyncDirection({
+          localCommitSha: commitStatus?.localCommitSha,
+          remoteCommitSha: commitStatus?.remoteCommitSha,
+          hasLocalChanges: Boolean(state.unsyncedSince),
+        })
+      : "unknown";
+    const localCommit = String(commitStatus?.localCommitSha || provider?.lastKnownCommitSha || "").slice(0, 7) || "unknown";
+    const remoteCommit = String(commitStatus?.remoteCommitSha || "").slice(0, 7) || "unknown";
+    const directionMessage = commitDirection === "remote"
+      ? `This machine ${localCommit} · GitHub ${remoteCommit} is newer · Sync to pull`
+      : commitDirection === "both"
+        ? `Both changed · This machine ${localCommit} · GitHub ${remoteCommit} · Sync to resolve`
+        : commitDirection === "local"
+          ? `This machine has changes after ${localCommit} · Push to GitHub`
+          : null;
+    const directionClass = commitDirection === "remote"
+      ? "remote-ahead"
+      : commitDirection === "both"
+        ? "remote-ahead both-changed"
+        : commitDirection === "local"
+          ? "local-ahead"
+          : "";
+    const statusMessage = hasError ? `${provider.lastError} · ${lastSync}` : directionMessage || lastSync;
     return `
-      <div class="cloud-provider ${hasError ? "has-error" : ""}" data-provider-status="${providerName}" title="${escapeHtml(`${automaticLabel}. ${statusMessage}.`)}">
+      <div class="cloud-provider ${directionClass} ${hasError ? "has-error" : ""}" data-provider-status="${providerName}" title="${escapeHtml(`${automaticLabel}. ${statusMessage}.`)}">
         <button class="cloud-provider-main" type="button" data-action="open-github-settings" aria-label="Open GitHub sync settings">
           ${providerIcon(providerName, 18)}
           <span class="cloud-provider-copy"><strong>${escapeHtml(label)} <span class="auto-state ${automatic ? "on" : ""}" aria-label="${automaticLabel}">${automatic ? "Auto on" : "Auto off"}</span></strong><small>${escapeHtml(statusMessage)}</small></span>
@@ -2276,6 +2510,67 @@
 
   function providerHomeStatus() {
     return providerHomeCard("github", "GitHub", state.providers?.github);
+  }
+
+  function markGitHubCommitStatusSynced() {
+    const github = state.providers?.github;
+    if (!github?.lastKnownCommitSha) return;
+    github.commitStatus = {
+      localCommitSha: github.lastKnownCommitSha,
+      remoteCommitSha: github.lastKnownCommitSha,
+      checkedAt: ExcalidrawSyncCore.nowIso(),
+    };
+    state.githubDirectionNoticeKey = null;
+  }
+
+  async function refreshGitHubCommitStatus({ notify = true } = {}) {
+    const github = state.providers?.github;
+    if (!github?.connected || state.busy || state.githubCommitCheckInFlight) return;
+    state.githubCommitCheckInFlight = true;
+    try {
+      const result = await sendMessage({ type: "github:commitStatus" });
+      const publicGithub = result.providers?.github || github;
+      state.providers = result.providers || state.providers;
+      state.providers.github = {
+        ...publicGithub,
+        commitStatus: {
+          localCommitSha: result.localCommitSha,
+          remoteCommitSha: result.remoteCommitSha,
+          checkedAt: result.checkedAt,
+        },
+      };
+      const direction = ExcalidrawSyncCore.githubSyncDirection({
+        localCommitSha: result.localCommitSha,
+        remoteCommitSha: result.remoteCommitSha,
+        hasLocalChanges: Boolean(state.unsyncedSince),
+      });
+      const localCommit = String(result.localCommitSha || "").slice(0, 7) || "unknown";
+      const remoteCommit = String(result.remoteCommitSha || "").slice(0, 7) || "unknown";
+      const noticeKey = `${direction}:${localCommit}:${remoteCommit}`;
+      if (notify && noticeKey !== state.githubDirectionNoticeKey) {
+        if (direction === "remote" || direction === "both") {
+          addNotification(
+            "error",
+            "GitHub has newer commits",
+            direction === "both"
+              ? `This machine has local changes after ${localCommit}, and GitHub is now ${remoteCommit}. Sync to review the conflict before uploading.`
+              : `This machine last synced ${localCommit}, while GitHub is now ${remoteCommit}. Sync to pull the newer version.`,
+          );
+        } else if (direction === "local") {
+          addNotification(
+            "info",
+            "Local changes ready to push",
+            `This machine has changes after GitHub commit ${remoteCommit}. Push them when you are ready.`,
+          );
+        }
+        state.githubDirectionNoticeKey = noticeKey;
+      }
+      updateSaveIndicators({ rerenderHeader: false });
+    } catch (error) {
+      recordError("github-commit-status", error);
+    } finally {
+      state.githubCommitCheckInFlight = false;
+    }
   }
 
   function fileRow(file, { pinned = false } = {}) {
@@ -2402,6 +2697,7 @@
           </div>
           <label class="toggle-row"><span class="toggle-copy"><strong>Notifications</strong><small>Show save and sync alerts</small></span><input type="checkbox" name="notificationsEnabled" ${state.saveSettings.notificationsEnabled ? "checked" : ""}><span class="toggle-ui" aria-hidden="true"></span></label>
           <div class="save-summary"><span class="status-chip"><strong>Local save</strong>${escapeHtml(formatRelativeTime(state.lastSavedAt))}</span><span class="status-chip"><strong>Cloud sync</strong>${hasConnectedCloud() ? escapeHtml(formatRelativeTime(state.lastSyncedAt)) : "Not connected"}</span></div>
+          <div class="compact-actions"><button class="button" type="button" data-action="notifications">${icon("bell", 14)} View notification history</button></div>
           <div class="settings-subsection">
             <div class="settings-heading">${icon("folder", 17)}<div><strong>Local storage</strong><small>Disk copy plus browser recovery copy</small></div><span class="badge ${state.nativeStorage.available ? "connected" : ""}">${state.nativeStorage.available ? "Connected" : "Helper needed"}</span></div>
           </div>
@@ -2565,14 +2861,11 @@
   }
 
   function renderHeader() {
-    const notificationCount = state.notifications.filter((item) => !item.readAt).length + (saveHealth().kind ? 1 : 0);
     replaceMarkup(elements.header, `
       <button class="brand-home" type="button" data-action="home" aria-label="Go to ExcaliSync home">
-        <span class="brand-mark">${icon("logo", 22)}</span>
+        <span class="brand-mark">${brandLogo(34)}</span>
         <span class="brand"><strong>ExcaliSync</strong><span>${escapeHtml(state.workspace?.name || "My Excalidraw")}</span></span>
       </button>
-      <button class="icon-button header-sync" type="button" data-action="sync" aria-label="Sync all documents now" title="Sync all documents now">${icon("sync", 19)}</button>
-      <button class="icon-button notification-button" type="button" data-action="notifications" aria-label="Notifications${notificationCount ? `, ${notificationCount} alert${notificationCount === 1 ? "" : "s"}` : ""}">${icon("bell", 20)}${notificationCount ? `<span class="notification-badge">${Math.min(99, notificationCount)}</span>` : ""}</button>
       <button class="icon-button" type="button" data-action="close" aria-label="Close sidebar">${icon("close", 21)}</button>`);
     localizeUi(elements.header);
   }
@@ -2872,6 +3165,7 @@
 
   async function applyGitHubWorkspace(result, message) {
     state.providers = result.providers || state.providers;
+    markGitHubCommitStatusSynced();
     state.workspace = ExcalidrawSyncCore.reconcileWorkspaces(
       state.workspace,
       result.workspace,
@@ -2885,6 +3179,8 @@
     await applySceneInPlace(active.scene);
     state.lastSyncedAt = ExcalidrawSyncCore.nowIso();
     state.unsyncedSince = null;
+    state.pendingSyncConflicts = [];
+    state.syncBaseline = ExcalidrawSyncCore.workspaceSyncBaseline(state.workspace);
     await persistSaveState();
     render();
     showToast(message);
@@ -2933,7 +3229,16 @@
     setBusy(true, force ? "Force pushing to GitHub…" : "Pushing to GitHub…");
     try {
       await captureAndSaveActive({ sync: false, force: true });
-      const result = await sendMessage({ type: "github:push", workspace: state.workspace, force });
+      const result = await sendMessage({
+        type: "github:push",
+        workspace: state.workspace,
+        force,
+        syncBaseline: state.syncBaseline,
+      });
+      if (result.conflicts?.length) {
+        pauseForSyncConflicts(result.conflicts);
+        return;
+      }
       await applyGitHubWorkspace(result, force
         ? "Force pushed this browser’s library to GitHub."
         : "Pushed changes to GitHub after merging remote updates.");
@@ -3222,6 +3527,13 @@
       );
       state.lastSavedAt = recovery?.lastSavedAt || savedState?.lastSavedAt || (workspaceSource ? state.workspace.updatedAt : null);
       state.lastSyncedAt = recovery?.lastSyncedAt || savedState?.lastSyncedAt || null;
+      state.syncBaseline = recovery?.syncBaseline || savedState?.syncBaseline || null;
+      state.pendingSyncConflicts = recovery?.pendingSyncConflicts
+        || savedState?.pendingSyncConflicts
+        || [];
+      state.pendingConflictResolution = recovery?.pendingConflictResolution
+        || savedState?.pendingConflictResolution
+        || null;
       state.unsyncedSince = recovery?.unsyncedSince || savedState?.unsyncedSince || null;
       state.dirtySince = recovery?.dirtySince || null;
       state.view = recovery?.view || "files";
@@ -3266,6 +3578,12 @@
       state.lastSyncedAt ||= providerSyncTimes.at(-1) || null;
       state.lastBrowserFingerprint = browserFingerprint();
       render();
+      void refreshGitHubCommitStatus();
+      if (state.pendingSyncConflicts.length) {
+        window.setTimeout(() => { void resolveSyncConflicts(); }, 0);
+      } else if (state.pendingConflictResolution) {
+        window.setTimeout(() => { void syncNow({ quiet: true }); }, 0);
+      }
       if (durableRestoreNotice) {
         showToast("Recovered your ExcaliSync files from local recovery storage.");
       }
@@ -3287,6 +3605,7 @@
         if (state.open && state.view === "notifications") render();
         else updateSaveIndicators();
       }, 30_000);
+      setInterval(() => { void refreshGitHubCommitStatus(); }, 60_000);
       window.addEventListener("pagehide", () => {
         captureAndSaveActive({ sync: false, force: true }).catch(() => {});
       });

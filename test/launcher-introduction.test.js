@@ -17,7 +17,7 @@ test("a newly installed extension highlights its visible launcher until the firs
   assert.match(background, /details\.reason === "install"[\s\S]*storageSet\(LAUNCHER_INTRODUCED_KEY, false\)/);
   assert.match(background, /onClicked[\s\S]*storageSet\(LAUNCHER_INTRODUCED_KEY, true\)/);
   assert.match(content, /\.launcher\.needs-introduction[\s\S]*animation: launcher-introduction/);
-  assert.match(content, /onActivate: \(\) => setOpen\(true, \{ home: true, acknowledge: true \}\)/);
+  assert.match(content, /onActivate: \(\) => \{[\s\S]*setOpen\(opening, \{ home: opening, acknowledge: opening \}\)/);
   assert.match(content, /setOpen\(opening, \{ home: opening, acknowledge: opening \}\)/);
   assert.match(content, /storageSet\(LAUNCHER_INTRODUCED_KEY, true\)/);
 });

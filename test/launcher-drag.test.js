@@ -124,6 +124,13 @@ test("a normal launcher click still opens the sidebar", () => {
   assert.equal(activationCount, 1);
 });
 
+test("clicking the launcher again closes an already open sidebar", () => {
+  assert.match(
+    content,
+    /onActivate: \(\) => \{[\s\S]*const opening = !state\.open;[\s\S]*setOpen\(opening, \{ home: opening, acknowledge: opening \}\);[\s\S]*\}/,
+  );
+});
+
 test("Alt+Arrow moves the launcher for keyboard users", () => {
   const dom = new JSDOM("<!doctype html><button>Launcher</button>", { pretendToBeVisual: true });
   const button = dom.window.document.querySelector("button");

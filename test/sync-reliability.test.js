@@ -18,7 +18,7 @@ test("Command-S and Control-S trigger explicit save while a plain S does not", (
   assert.match(content, /await syncNow/);
 });
 
-test("a stale GitHub SHA conflict refreshes state and retries instead of requiring reconnect", async () => {
+test("a stale GitHub SHA conflict remains retryable without reusing stale content", async () => {
   let attempts = 0;
   const result = await core.retryConflict(async () => {
     attempts += 1;
@@ -31,12 +31,17 @@ test("a stale GitHub SHA conflict refreshes state and retries instead of requiri
   });
   assert.equal(result, "updated");
   assert.equal(attempts, 2);
-  assert.match(background, /putGitHubContentWithRetry/);
-  assert.match(background, /syncInFlight = syncInFlight[\s\S]*?\.then\(\(\) => syncAll\(message\.workspace\)\)/);
+  assert.match(background, /async function putGitHubContent/);
+  assert.match(background, /tree\.get\(file\.path\)/);
+  assert.doesNotMatch(background.slice(
+    background.indexOf("async function putGitHubContent"),
+    background.indexOf("async function deleteGitHubContent"),
+  ), /retryConflict/);
+  assert.match(background, /syncInFlight = syncInFlight[\s\S]*?\.then\(\(\) => syncAll\(message\.workspace,[\s\S]*syncBaseline: message\.syncBaseline/);
   assert.match(background, /body\?\.error \|\| !body\?\.access_token/);
 });
 
-test("GitHub sync survives several consecutive cross-machine SHA conflicts", async () => {
+test("GitHub sync re-pulls after repeated cross-machine SHA conflicts", async () => {
   let attempts = 0;
   const result = await core.retryConflict(async () => {
     attempts += 1;
@@ -50,12 +55,11 @@ test("GitHub sync survives several consecutive cross-machine SHA conflicts", asy
 
   assert.equal(result, "updated");
   assert.equal(attempts, 6);
-  assert.match(background, /getGitHubContent\(owner, repo, file\.path, token, branch, \{ fresh: true \}\)/);
+  assert.match(background, /readGitHubWorkspaceSnapshot/);
   assert.match(background, /cache: "no-store"/);
   assert.match(background, /"Cache-Control": "no-cache"/);
-  assert.match(background, /attempts: 8, delayMs: 200, jitterMs: 400/);
   assert.match(background, /retryable: error\.status === 409/);
-  assert.match(content, /if \(retryableFailure\) \{[\s\S]*?scheduleCloudSync\(5000\)/);
+  assert.match(content, /if \(retryableFailure\) \{[\s\S]*?scheduleCloudSync\(5000, conflictResolution\)/);
 });
 
 test("GitHub sync creates no write plan when every remote blob already matches", async () => {
@@ -117,7 +121,7 @@ test("renaming files and folders produces new provider paths and queues cloud cl
   assert.match(content, /async function renameEntry[\s\S]*?await persistWorkspace\(\)/);
   assert.match(background, /providerChangePlan\([\s\S]*?previousPaths/);
   assert.match(background, /for \(const path of removedPaths\)/);
-  assert.match(background, /deleteGitHubContentWithRetry/);
+  assert.match(background, /deleteGitHubContent/);
 });
 
 test("warning reasons use immediate accessible tooltips and provider messages do not truncate", () => {

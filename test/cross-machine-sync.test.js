@@ -11,10 +11,11 @@ const background = fs.readFileSync(path.join(__dirname, "..", "background.js"), 
 const content = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
 
 test("GitHub safe push downloads and merges the remote workspace before uploading", () => {
-  assert.match(background, /async function readGitHubWorkspace/);
+  assert.match(background, /async function readGitHubWorkspaceSnapshot/);
   assert.match(background, /workspaceFromProviderIndex\(index, scenes\)/);
-  assert.match(background, /reconcileWorkspaces\([\s\S]*force \? "force-push" : "merge"/);
-  assert.match(background, /case "github:push"[\s\S]*force: Boolean\(message\.force\)/);
+  assert.match(background, /workspaceConflicts\(workspaceInput, remoteWorkspace, syncBaseline\)/);
+  assert.match(background, /resolveWorkspaceSync\([\s\S]*syncBaseline,[\s\S]*conflictResolution/);
+  assert.match(background, /case "github:push"[\s\S]*syncBaseline: message\.syncBaseline/);
 });
 
 test("explicit GitHub pull warns before replacing local data and applies the remote workspace", () => {
@@ -34,8 +35,8 @@ test("explicit GitHub pull warns before replacing local data and applies the rem
 test("force push requires typed confirmation and intentionally skips the remote merge", () => {
   assert.match(content, /label: 'Type "force push" to confirm'/);
   assert.match(content, /confirmed\.confirmation\.trim\(\)\.toLowerCase\(\) !== "force push"/);
-  assert.match(content, /type: "github:push", workspace: state\.workspace, force/);
-  assert.match(background, /force \? "force-push" : "merge"/);
+  assert.match(content, /type: "github:push",[\s\S]*workspace: state\.workspace,[\s\S]*force/);
+  assert.match(background, /force[\s\S]*reconcileWorkspaces\(workspaceInput, remoteWorkspace, "force-push"\)/);
 });
 
 test("manual GitHub push confirms before overwriting repository drawings", () => {

@@ -549,12 +549,19 @@
         : Boolean(local && remote);
       if (!bothChanged) continue;
       const [kind, id] = key.split(":");
+      const conflictSide = (value) => value ? {
+        fingerprint: value.fingerprint,
+        updatedAt: value.entry?.updatedAt || null,
+        entry: value.entry,
+      } : null;
       conflicts.push({
         kind,
         id,
         name: local?.name || remote?.name || "Untitled",
         localExists: Boolean(local),
         remoteExists: Boolean(remote),
+        local: conflictSide(local),
+        remote: conflictSide(remote),
       });
     }
     return conflicts;
@@ -983,6 +990,15 @@
     return timestamp(provider.lastErrorAt) > timestamp(provider.lastSyncAt);
   }
 
+  function githubSyncDirection({ localCommitSha = null, remoteCommitSha = null, hasLocalChanges = false } = {}) {
+    if (!localCommitSha || !remoteCommitSha) return hasLocalChanges ? "local" : "unknown";
+    const remoteChanged = localCommitSha !== remoteCommitSha;
+    if (remoteChanged && hasLocalChanges) return "both";
+    if (remoteChanged) return "remote";
+    if (hasLocalChanges) return "local";
+    return "synced";
+  }
+
   const api = {
     WORKSPACE_VERSION,
     TRASH_RETENTION_MS,
@@ -1026,6 +1042,7 @@
     isDeleteSwipe,
     retryConflict,
     hasActiveProviderError,
+    githubSyncDirection,
   };
 
   globalScope.ExcalidrawSyncCore = api;

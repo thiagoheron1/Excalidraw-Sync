@@ -78,6 +78,8 @@ function defaultProviderState() {
       lastError: null,
       lastErrorAt: null,
       repositoryUrl: null,
+      lastKnownCommitSha: null,
+      lastKnownCommitAt: null,
       autoSquash: {
         ...ExcalidrawSyncCore.normalizeAutoSquashSettings(),
         lastRunAt: null,
@@ -161,6 +163,8 @@ function publicProviderState(providers) {
       lastError: providers.github.lastError,
       lastErrorAt: providers.github.lastErrorAt,
       repositoryUrl: providers.github.repositoryUrl,
+      lastKnownCommitSha: providers.github.lastKnownCommitSha || null,
+      lastKnownCommitAt: providers.github.lastKnownCommitAt || null,
       autoSquash: providers.github.autoSquash,
     },
   };
@@ -383,37 +387,31 @@ async function getGitHubContent(owner, repo, path, token, branch, { fresh = fals
   }
 }
 
-async function putGitHubContentWithRetry(owner, repo, branch, token, file, message) {
+async function putGitHubContent(owner, repo, branch, token, file, message, expectedSha = null) {
   const desiredSha = await ExcalidrawSyncCore.gitBlobSha(file.content);
-  return ExcalidrawSyncCore.retryConflict(async () => {
-    const current = await getGitHubContent(owner, repo, file.path, token, branch, { fresh: true });
-    if (current?.sha === desiredSha) return { unchanged: true };
-    return githubRequest(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(file.path)}`,
-      token,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          message,
-          content: utf8ToBase64(file.content),
-          branch,
-          ...(current?.sha ? { sha: current.sha } : {}),
-        }),
-      },
-    );
-  }, { attempts: 8, delayMs: 200, jitterMs: 400 });
+  if (expectedSha === desiredSha) return { unchanged: true };
+  return githubRequest(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(file.path)}`,
+    token,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        message,
+        content: utf8ToBase64(file.content),
+        branch,
+        ...(expectedSha ? { sha: expectedSha } : {}),
+      }),
+    },
+  );
 }
 
-async function deleteGitHubContentWithRetry(owner, repo, branch, token, path) {
-  return ExcalidrawSyncCore.retryConflict(async () => {
-    const current = await getGitHubContent(owner, repo, path, token, branch, { fresh: true });
-    if (!current?.sha) return { unchanged: true };
-    return githubRequest(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(path)}`,
-      token,
-      { method: "DELETE", body: JSON.stringify({ message: `Remove ${path}`, sha: current.sha, branch }) },
-    );
-  }, { attempts: 8, delayMs: 200, jitterMs: 400 });
+async function deleteGitHubContent(owner, repo, branch, token, path, expectedSha = null) {
+  if (!expectedSha) return { unchanged: true };
+  return githubRequest(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeGitHubPath(path)}`,
+    token,
+    { method: "DELETE", body: JSON.stringify({ message: `Remove ${path}`, sha: expectedSha, branch }) },
+  );
 }
 
 async function ensureGitHubRepository(providers) {
@@ -486,6 +484,43 @@ async function getGitHubReference(owner, repo, branch, token) {
   }
 }
 
+async function getGitHubCommitDate(owner, repo, sha, token) {
+  if (!sha) return null;
+  try {
+    const commit = await githubRequest(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(sha)}`,
+      token,
+      { cache: "no-store", headers: { "Cache-Control": "no-cache" } },
+    );
+    return commit.commit?.committer?.date || commit.commit?.author?.date || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function rememberGitHubHead(providers, repository, token) {
+  const branch = repository.default_branch || "main";
+  const reference = await getGitHubReference(repository.owner.login, repository.name, branch, token);
+  providers.github.lastKnownCommitSha = reference?.object?.sha || null;
+  providers.github.lastKnownCommitAt = new Date().toISOString();
+  return reference;
+}
+
+async function githubCommitStatus(providers) {
+  if (!providers.github.auth?.accessToken) throw new Error("Connect GitHub first.");
+  const token = await githubToken(providers);
+  const repository = await ensureGitHubRepository(providers);
+  const branch = repository.default_branch || "main";
+  const reference = await getGitHubReference(repository.owner.login, repository.name, branch, token);
+  return {
+    localCommitSha: providers.github.lastKnownCommitSha || null,
+    remoteCommitSha: reference?.object?.sha || null,
+    checkedAt: new Date().toISOString(),
+    branch,
+    url: repository.html_url,
+  };
+}
+
 async function updateGitHubReference(owner, repo, branch, token, sha, existingReference) {
   if (existingReference) {
     return githubRequest(
@@ -527,6 +562,8 @@ async function githubSquash(providers) {
     },
   );
   await updateGitHubReference(owner, repo, branch, token, squashedCommit.sha, reference);
+  providers.github.lastKnownCommitSha = squashedCommit.sha;
+  providers.github.lastKnownCommitAt = new Date().toISOString();
   providers.github.lastSyncAt = new Date().toISOString();
   providers.github.lastError = null;
   providers.github.lastErrorAt = null;
@@ -597,7 +634,7 @@ async function runAutomaticGitHubSquash() {
   await configureAutoSquashAlarm(providers, { reset: true });
 }
 
-async function readGitHubWorkspace(repository, rootDirectory, token) {
+async function readGitHubWorkspaceSnapshot(repository, rootDirectory, token) {
   const owner = repository.owner.login;
   const repo = repository.name;
   const branch = repository.default_branch || "main";
@@ -605,17 +642,33 @@ async function readGitHubWorkspace(repository, rootDirectory, token) {
   const indexPath = ExcalidrawSyncCore.buildProviderFiles(placeholder, rootDirectory)
     .find((file) => file.id === "workspace-index").path;
   const response = await getGitHubContent(owner, repo, indexPath, token, branch, { fresh: true });
-  if (!response?.content) return null;
+  if (!response?.content) return { workspace: null, indexPath, shas: new Map() };
   const index = JSON.parse(base64ToUtf8(response.content));
   const scenes = {};
+  const shas = new Map([[indexPath, response.sha]]);
   await Promise.all((index.files || []).map(async (file) => {
     const remote = await getGitHubContent(owner, repo, file.path, token, branch, { fresh: true });
-    if (remote?.content) scenes[file.path] = JSON.parse(base64ToUtf8(remote.content));
+    if (remote?.content) {
+      scenes[file.path] = JSON.parse(base64ToUtf8(remote.content));
+      shas.set(file.path, remote.sha);
+    }
   }));
-  return ExcalidrawSyncCore.workspaceFromProviderIndex(index, scenes);
+  return {
+    workspace: ExcalidrawSyncCore.workspaceFromProviderIndex(index, scenes),
+    indexPath,
+    shas,
+  };
 }
 
-async function githubSync(workspaceInput, providers, { force = false } = {}) {
+async function readGitHubWorkspace(repository, rootDirectory, token) {
+  return (await readGitHubWorkspaceSnapshot(repository, rootDirectory, token)).workspace;
+}
+
+async function githubSync(
+  workspaceInput,
+  providers,
+  { force = false, syncBaseline = null, conflictResolution = null } = {},
+) {
   if (!providers.github.auth?.accessToken) {
     return { skipped: true };
   }
@@ -624,16 +677,43 @@ async function githubSync(workspaceInput, providers, { force = false } = {}) {
   const owner = repository.owner.login;
   const repo = repository.name;
   const branch = repository.default_branch || "main";
-  const remoteWorkspace = await readGitHubWorkspace(
+  const remoteSnapshot = await readGitHubWorkspaceSnapshot(
     repository,
     providers.github.config.rootDirectory,
     token,
   );
-  const workspace = ExcalidrawSyncCore.reconcileWorkspaces(
-    workspaceInput,
-    remoteWorkspace,
-    force ? "force-push" : "merge",
-  );
+  const remoteWorkspace = remoteSnapshot.workspace;
+  const conflicts = force
+    ? []
+    : ExcalidrawSyncCore.workspaceConflicts(workspaceInput, remoteWorkspace, syncBaseline);
+  if (conflicts.length && !conflictResolution) {
+    const reference = await getGitHubReference(owner, repo, branch, token);
+    const localCommitSha = providers.github.lastKnownCommitSha || null;
+    const remoteCommitSha = reference?.object?.sha || null;
+    const [localCommitAt, remoteCommitAt] = await Promise.all([
+      getGitHubCommitDate(owner, repo, localCommitSha, token),
+      getGitHubCommitDate(owner, repo, remoteCommitSha, token),
+    ]);
+    return {
+      skipped: true,
+      conflicts: conflicts.map((conflict) => ({
+        ...conflict,
+        localCommitSha,
+        localCommitAt,
+        remoteCommitSha,
+        remoteCommitAt,
+      })),
+      url: repository.html_url,
+    };
+  }
+  const workspace = force
+    ? ExcalidrawSyncCore.reconcileWorkspaces(workspaceInput, remoteWorkspace, "force-push")
+    : ExcalidrawSyncCore.resolveWorkspaceSync(
+        workspaceInput,
+        remoteWorkspace,
+        syncBaseline,
+        conflictResolution,
+      );
   const desiredFiles = ExcalidrawSyncCore.buildProviderFiles(
     workspace,
     providers.github.config.rootDirectory,
@@ -654,6 +734,18 @@ async function githubSync(workspaceInput, providers, { force = false } = {}) {
     }
   }
   const tree = await githubTree(owner, repo, branch, token);
+  for (const [path, expectedSha] of remoteSnapshot.shas) {
+    if (tree.get(path) !== expectedSha) {
+      const error = new Error("GitHub changed while ExcaliSync was preparing this sync.");
+      error.status = 409;
+      throw error;
+    }
+  }
+  if (!remoteSnapshot.shas.has(remoteSnapshot.indexPath) && tree.has(remoteSnapshot.indexPath)) {
+    const error = new Error("GitHub was initialized by another device during this sync.");
+    error.status = 409;
+    throw error;
+  }
   const { changedFiles, removedPaths } = await ExcalidrawSyncCore.providerChangePlan(
     desiredFiles,
     tree,
@@ -661,6 +753,7 @@ async function githubSync(workspaceInput, providers, { force = false } = {}) {
   );
   const changed = [];
   if (!changedFiles.length && !removedPaths.length) {
+    await rememberGitHubHead(providers, repository, token);
     providers.github.repositoryUrl = repository.html_url;
     providers.github.lastSyncAt = new Date().toISOString();
     providers.github.lastError = null;
@@ -668,18 +761,27 @@ async function githubSync(workspaceInput, providers, { force = false } = {}) {
     return { skipped: false, changed, url: repository.html_url, workspace };
   }
   for (const file of changedFiles.filter((item) => item.id !== "workspace-index")) {
-    await putGitHubContentWithRetry(owner, repo, branch, token, file, `Sync ${file.name}`);
+    await putGitHubContent(owner, repo, branch, token, file, `Sync ${file.name}`, tree.get(file.path));
     changed.push(file.path);
   }
   for (const path of removedPaths) {
-    await deleteGitHubContentWithRetry(owner, repo, branch, token, path);
+    await deleteGitHubContent(owner, repo, branch, token, path, tree.get(path));
     changed.push(path);
   }
   if (changedFiles.some((file) => file.id === "workspace-index")) {
-    await putGitHubContentWithRetry(owner, repo, branch, token, indexFile, "Update Excalidraw Sync index");
+    await putGitHubContent(
+      owner,
+      repo,
+      branch,
+      token,
+      indexFile,
+      "Update Excalidraw Sync index",
+      tree.get(indexFile.path),
+    );
     changed.push(indexFile.path);
   }
   providers.github.repositoryUrl = repository.html_url;
+  await rememberGitHubHead(providers, repository, token);
   providers.github.lastSyncAt = new Date().toISOString();
   providers.github.lastError = null;
   providers.github.lastErrorAt = null;
@@ -697,6 +799,7 @@ async function githubPull(providers) {
   );
   if (!workspace) throw new Error("No ExcaliSync workspace was found in this repository.");
   providers.github.repositoryUrl = repository.html_url;
+  await rememberGitHubHead(providers, repository, token);
   providers.github.lastSyncAt = new Date().toISOString();
   providers.github.lastError = null;
   providers.github.lastErrorAt = null;
@@ -772,14 +875,14 @@ function selectedSyncProvider(providers) {
   return providers.syncAuthority === "github" ? "github" : "local";
 }
 
-async function syncAll(workspaceInput) {
+async function syncAll(workspaceInput, { syncBaseline = null, conflictResolution = null } = {}) {
   let workspace = ExcalidrawSyncCore.normalizeWorkspace(workspaceInput);
   const providers = await readProviders();
   const authority = selectedSyncProvider(providers);
   const result = { github: { skipped: true } };
   if (authority === "github" && providers.github.auth?.accessToken) {
     try {
-      result.github = await githubSync(workspace, providers);
+      result.github = await githubSync(workspace, providers, { syncBaseline, conflictResolution });
       workspace = result.github.workspace || workspace;
     } catch (error) {
       const retryable = error.status === 409;
@@ -788,7 +891,7 @@ async function syncAll(workspaceInput) {
         providers.github.lastErrorAt = null;
         result.github = {
           retryable: error.status === 409,
-          message: "GitHub changed remotely · retrying automatically…",
+          message: "GitHub changed while syncing · pulling the latest version before retrying…",
         };
       } else {
         providers.github.lastError = cleanMessage(error);
@@ -844,9 +947,19 @@ async function handleMessage(message) {
       await writeProviders(providers);
       return { ...result, providers: publicProviderState(providers) };
     }
+    case "github:commitStatus": {
+      const providers = await readProviders();
+      const result = await githubCommitStatus(providers);
+      await writeProviders(providers);
+      return { ...result, providers: publicProviderState(providers) };
+    }
     case "github:push": {
       const providers = await readProviders();
-      const result = await githubSync(message.workspace, providers, { force: Boolean(message.force) });
+      const result = await githubSync(message.workspace, providers, {
+        force: Boolean(message.force),
+        syncBaseline: message.syncBaseline,
+        conflictResolution: message.conflictResolution,
+      });
       await writeProviders(providers);
       return { ...result, providers: publicProviderState(providers) };
     }
@@ -878,6 +991,8 @@ async function handleMessage(message) {
         providers.github.auth = null;
         providers.github.account = null;
         providers.github.pendingAuth = null;
+        providers.github.lastKnownCommitSha = null;
+        providers.github.lastKnownCommitAt = null;
       }
       await writeProviders(providers);
       return publicProviderState(providers);
@@ -885,7 +1000,10 @@ async function handleMessage(message) {
     case "sync:workspace":
       syncInFlight = syncInFlight
         .catch(() => {})
-        .then(() => syncAll(message.workspace));
+        .then(() => syncAll(message.workspace, {
+          syncBaseline: message.syncBaseline,
+          conflictResolution: message.conflictResolution,
+        }));
       return syncInFlight;
     case "native:syncWorkspace":
       return nativeMessage({ type: "syncWorkspace", workspace: message.workspace });
