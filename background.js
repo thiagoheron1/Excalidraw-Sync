@@ -683,13 +683,18 @@ async function githubSync(
     token,
   );
   const remoteWorkspace = remoteSnapshot.workspace;
+  const reference = force ? null : await getGitHubReference(owner, repo, branch, token);
+  const localCommitSha = providers.github.lastKnownCommitSha || null;
+  const remoteCommitSha = reference?.object?.sha || null;
+  const effectiveConflictResolution = ExcalidrawSyncCore.githubConflictResolution({
+    requestedResolution: conflictResolution,
+    localCommitSha,
+    remoteCommitSha,
+  });
   const conflicts = force
     ? []
     : ExcalidrawSyncCore.workspaceConflicts(workspaceInput, remoteWorkspace, syncBaseline);
-  if (conflicts.length && !conflictResolution) {
-    const reference = await getGitHubReference(owner, repo, branch, token);
-    const localCommitSha = providers.github.lastKnownCommitSha || null;
-    const remoteCommitSha = reference?.object?.sha || null;
+  if (conflicts.length && !effectiveConflictResolution) {
     const [localCommitAt, remoteCommitAt] = await Promise.all([
       getGitHubCommitDate(owner, repo, localCommitSha, token),
       getGitHubCommitDate(owner, repo, remoteCommitSha, token),
@@ -712,7 +717,7 @@ async function githubSync(
         workspaceInput,
         remoteWorkspace,
         syncBaseline,
-        conflictResolution,
+        effectiveConflictResolution,
       );
   const desiredFiles = ExcalidrawSyncCore.buildProviderFiles(
     workspace,

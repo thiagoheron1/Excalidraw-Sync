@@ -525,8 +525,10 @@
 
   function workspaceConflicts(localInput, remoteInput, baselineInput = null) {
     if (!remoteInput) return [];
-    const localEntries = workspaceSyncEntries(localInput);
-    const remoteEntries = workspaceSyncEntries(remoteInput);
+    const localWorkspace = normalizeWorkspace(localInput);
+    const remoteWorkspace = normalizeWorkspace(remoteInput);
+    const localEntries = workspaceSyncEntries(localWorkspace);
+    const remoteEntries = workspaceSyncEntries(remoteWorkspace);
     const baselineEntries = baselineInput?.entries && typeof baselineInput.entries === "object"
       ? baselineInput.entries
       : {};
@@ -549,6 +551,16 @@
         : Boolean(local && remote);
       if (!bothChanged) continue;
       const [kind, id] = key.split(":");
+      if (kind === "file" && Boolean(local) !== Boolean(remote)) {
+        const missingWorkspace = local ? remoteWorkspace : localWorkspace;
+        const deletion = missingWorkspace.trash
+          .filter((item) => item.kind === kind && item.entry?.id === id && isTrashItemActive(item))
+          .sort((left, right) => timestamp(right.deletedAt) - timestamp(left.deletedAt))[0];
+        const survivingEntry = (local || remote)?.entry;
+        const editTime = timestamp(survivingEntry?.updatedAt);
+        const deletionTime = timestamp(deletion?.deletedAt);
+        if (editTime && deletionTime && editTime !== deletionTime) continue;
+      }
       const conflictSide = (value) => value ? {
         fingerprint: value.fingerprint,
         updatedAt: value.entry?.updatedAt || null,
@@ -573,6 +585,30 @@
     const remote = normalizeWorkspace(remoteInput);
     const conflicts = workspaceConflicts(local, remote, baselineInput);
     const merged = mergeWorkspaces(local, remote);
+    const localEntries = workspaceSyncEntries(local);
+    const remoteEntries = workspaceSyncEntries(remote);
+    const baselineEntries = baselineInput?.entries && typeof baselineInput.entries === "object"
+      ? baselineInput.entries
+      : {};
+    for (const key of new Set([...localEntries.keys(), ...remoteEntries.keys()])) {
+      if (!key.startsWith("file:") || !Object.prototype.hasOwnProperty.call(baselineEntries, key)) continue;
+      const localEntry = localEntries.get(key);
+      const remoteEntry = remoteEntries.get(key);
+      if (Boolean(localEntry) === Boolean(remoteEntry)) continue;
+      const survivor = localEntry || remoteEntry;
+      if (survivor.fingerprint === baselineEntries[key]) continue;
+      const missingWorkspace = localEntry ? remote : local;
+      const fileId = key.slice("file:".length);
+      const deletion = missingWorkspace.trash
+        .filter((item) => item.kind === "file" && item.entry?.id === fileId && isTrashItemActive(item))
+        .sort((left, right) => timestamp(right.deletedAt) - timestamp(left.deletedAt))[0];
+      if (!deletion || timestamp(survivor.entry.updatedAt) <= timestamp(deletion.deletedAt)) continue;
+      merged.files = merged.files.filter((file) => file.id !== fileId);
+      merged.files.push(survivor.entry);
+      merged.trash = merged.trash.map((item) => item.kind === "file" && item.entry?.id === fileId
+        ? { ...item, restoredAt: survivor.entry.updatedAt }
+        : item);
+    }
     if (!conflicts.length || !["local", "remote"].includes(resolution)) return merged;
     const selected = resolution === "local" ? local : remote;
     for (const conflict of conflicts) {
@@ -999,6 +1035,12 @@
     return "synced";
   }
 
+  function githubConflictResolution({ requestedResolution = null, localCommitSha = null, remoteCommitSha = null } = {}) {
+    if (["local", "remote"].includes(requestedResolution)) return requestedResolution;
+    if (localCommitSha && remoteCommitSha && localCommitSha === remoteCommitSha) return "local";
+    return null;
+  }
+
   const api = {
     WORKSPACE_VERSION,
     TRASH_RETENTION_MS,
@@ -1043,6 +1085,7 @@
     retryConflict,
     hasActiveProviderError,
     githubSyncDirection,
+    githubConflictResolution,
   };
 
   globalScope.ExcalidrawSyncCore = api;

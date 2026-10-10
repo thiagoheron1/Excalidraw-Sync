@@ -1390,8 +1390,23 @@
     </section>`;
   }
 
+  function conflictsShareKnownHead(conflicts) {
+    return conflicts.length > 0 && conflicts.every((conflict) =>
+      conflict.localCommitSha
+      && conflict.remoteCommitSha
+      && conflict.localCommitSha === conflict.remoteCommitSha,
+    );
+  }
+
   async function resolveSyncConflicts(conflicts = state.pendingSyncConflicts) {
     if (!conflicts.length || state.syncConflictPromptOpen) return;
+    if (conflictsShareKnownHead(conflicts)) {
+      state.pendingSyncConflicts = [];
+      state.pendingConflictResolution = "local";
+      await persistSaveState();
+      await syncNow({ quiet: true, conflictResolution: "local" });
+      return;
+    }
     state.syncConflictPromptOpen = true;
     const names = conflicts.slice(0, 4).map((conflict) => conflict.name).join(", ");
     const remaining = conflicts.length > 4 ? ` and ${conflicts.length - 4} more` : "";
@@ -1405,10 +1420,10 @@
           name: "resolution",
           label: "Conflicting versions",
           type: "select",
-          value: "remote",
+          value: "local",
           options: [
-            { value: "remote", label: "Use GitHub's conflicting versions" },
             { value: "local", label: "Keep this device's conflicting versions" },
+            { value: "remote", label: "Use GitHub's conflicting versions" },
           ],
         }],
         confirmLabel: "Resolve and sync",

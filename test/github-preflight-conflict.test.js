@@ -64,7 +64,7 @@ test("same-file edits on two laptops pause automatic upload until the user choos
   assert.equal(conflicts[0].remote.entry.name, "Remote architecture");
   assert.equal(core.resolveWorkspaceSync(local, remote, baseline, "local").files[0].name, "Local architecture");
   assert.equal(core.resolveWorkspaceSync(local, remote, baseline, "remote").files[0].name, "Remote architecture");
-  assert.match(background, /if \(conflicts\.length && !conflictResolution\)[\s\S]*return \{[\s\S]*conflicts/);
+  assert.match(background, /if \(conflicts\.length && !effectiveConflictResolution\)[\s\S]*return \{[\s\S]*conflicts/);
   assert.match(background, /conflicts: conflicts\.map[\s\S]*localCommitSha,[\s\S]*remoteCommitSha,[\s\S]*remoteCommitAt,/);
   assert.match(content, /Resolve GitHub sync conflict/);
   assert.match(content, /Keep this device's conflicting versions/);
@@ -73,6 +73,61 @@ test("same-file edits on two laptops pause automatic upload until the user choos
   assert.match(content, /conflictScenePreview/);
   assert.match(content, /Known commit/);
   assert.match(content, /GitHub HEAD/);
+});
+
+test("a local edit newer than a GitHub deletion restores the file without a false conflict", () => {
+  const base = sharedWorkspace();
+  base.files[0].updatedAt = "2026-10-10T12:20:00.000Z";
+  const local = structuredClone(base);
+  local.files[0].name = "AWS local latest";
+  local.files[0].updatedAt = "2026-10-10T12:38:00.000Z";
+  const remote = core.trashEntry(structuredClone(base), "file", "shared-file", "2026-10-10T12:32:00.000Z");
+  const baseline = core.workspaceSyncBaseline(base);
+
+  assert.deepEqual(core.workspaceConflicts(local, remote, baseline), []);
+  const merged = core.resolveWorkspaceSync(local, remote, baseline);
+  assert.equal(merged.files.find((file) => file.id === "shared-file")?.name, "AWS local latest");
+  assert.equal(core.activeTrashItems(merged).some((item) => item.entry.id === "shared-file"), false);
+});
+
+test("a GitHub deletion newer than the local edit wins without repeatedly asking", () => {
+  const base = sharedWorkspace();
+  base.files[0].updatedAt = "2026-10-10T12:20:00.000Z";
+  const local = structuredClone(base);
+  local.files[0].updatedAt = "2026-10-10T12:30:00.000Z";
+  const remote = core.trashEntry(structuredClone(base), "file", "shared-file", "2026-10-10T12:40:00.000Z");
+  const baseline = core.workspaceSyncBaseline(base);
+
+  assert.deepEqual(core.workspaceConflicts(local, remote, baseline), []);
+  assert.equal(core.resolveWorkspaceSync(local, remote, baseline).files.some((file) => file.id === "shared-file"), false);
+});
+
+test("the conflict dialog defaults to keeping this device's version", () => {
+  assert.match(content, /name: "resolution",[\s\S]*value: "local"/);
+  assert.match(content, /options: \[[\s\S]*value: "local", label: "Keep this device's conflicting versions"/);
+});
+
+test("matching local and GitHub commit IDs make an uncommitted local change safe to push", () => {
+  const sharedHead = "a0842519320c69f68b8fb9ca8f4e934ad5600d91";
+
+  assert.equal(core.githubConflictResolution({
+    requestedResolution: null,
+    localCommitSha: sharedHead,
+    remoteCommitSha: sharedHead,
+  }), "local");
+  assert.equal(core.githubConflictResolution({
+    requestedResolution: null,
+    localCommitSha: sharedHead,
+    remoteCommitSha: "21cb1391136c332b76c118b2fc54db930b773810",
+  }), null);
+  assert.equal(core.githubConflictResolution({
+    requestedResolution: "remote",
+    localCommitSha: sharedHead,
+    remoteCommitSha: sharedHead,
+  }), "remote");
+  assert.match(background, /const effectiveConflictResolution = ExcalidrawSyncCore\.githubConflictResolution/);
+  assert.match(background, /conflicts\.length && !effectiveConflictResolution/);
+  assert.match(content, /conflictsShareKnownHead\(conflicts\)[\s\S]*syncNow\(\{ quiet: true, conflictResolution: "local" \}\)/);
 });
 
 test("a safe retry keeps the user's conflict choice instead of reopening the same dialog", () => {
