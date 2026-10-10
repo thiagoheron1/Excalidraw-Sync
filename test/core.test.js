@@ -130,6 +130,47 @@ test("a fresh second machine imports the remote folders and drawings", () => {
   assert.equal(merged.files[0].scene.elements[0].id, "remote-shape");
 });
 
+test("a second machine recovers a GitHub drawing omitted from a stale workspace index", () => {
+  const remote = core.createWorkspace("Shared diagrams");
+  remote.folders[0].name = "Personal";
+  const providerFiles = core.buildProviderFiles(remote, "Excalidraw");
+  const index = JSON.parse(providerFiles.find((file) => file.id === "workspace-index").content);
+  index.files = [];
+  const scene = core.normalizeScene({
+    ...core.emptyScene(),
+    elements: [{ id: "aws-remote-shape", type: "rectangle" }],
+  });
+
+  const downloaded = core.workspaceFromProviderIndex(index, {
+    "excalidraw/personal/aws.excalidraw": scene,
+  });
+
+  assert.equal(downloaded.files.length, 1);
+  assert.equal(downloaded.files[0].name, "AWS");
+  assert.equal(downloaded.files[0].folderId, remote.folders[0].id);
+  assert.equal(downloaded.files[0].scene.elements[0].id, "aws-remote-shape");
+});
+
+test("repository discovery does not resurrect a drawing recorded as deleted in the index", () => {
+  const remote = core.createWorkspace("Shared diagrams");
+  remote.folders[0].name = "Personal";
+  const deletedFile = remote.files[0];
+  deletedFile.name = "AWS";
+  const deleted = core.trashEntry(remote, "file", deletedFile.id, "2026-10-10T12:00:00.000Z");
+  const index = JSON.parse(core.buildProviderFiles(deleted, "Excalidraw")
+    .find((file) => file.id === "workspace-index").content);
+
+  const downloaded = core.workspaceFromProviderIndex(index, {
+    "excalidraw/personal/aws.excalidraw": {
+      ...core.emptyScene(),
+      elements: [{ id: "stale-deleted-shape", type: "rectangle" }],
+    },
+  });
+
+  assert.equal(downloaded.files.length, 0);
+  assert.equal(downloaded.trash.some((item) => item.entry.id === deletedFile.id), true);
+});
+
 test("cross-machine merge keeps the newest edit and propagates deletion tombstones", () => {
   const local = core.createWorkspace();
   local.id = "shared";

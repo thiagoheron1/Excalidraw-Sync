@@ -28,8 +28,21 @@ test("explicit GitHub pull warns before replacing local data and applies the rem
   assert.match(pull, /danger: true/);
   assert.match(pull, /type: "github:pull"/);
   assert.match(content, /state\.workspace = ExcalidrawSyncCore\.reconcileWorkspaces\(/);
+  assert.match(content, /state\.query = ""/);
+  assert.match(content, /state\.collapsedFolders\.clear\(\)/);
   assert.match(content, /await persistWorkspace\(\{ sync: false \}\)/);
   assert.match(content, /await applySceneInPlace\(active\.scene\)/);
+});
+
+test("GitHub pull discovers drawings that exist in the repository but are missing from a stale index", () => {
+  const snapshotStart = background.indexOf("async function readGitHubWorkspaceSnapshot");
+  const snapshotEnd = background.indexOf("async function readGitHubWorkspace", snapshotStart + 1);
+  const snapshot = background.slice(snapshotStart, snapshotEnd);
+
+  assert.match(snapshot, /await githubTree\(owner, repo, branch, token\)/);
+  assert.match(snapshot, /path\.startsWith\(`\$\{rootPrefix\}\/`\)/);
+  assert.match(snapshot, /path\.endsWith\("\.excalidraw"\)/);
+  assert.match(snapshot, /new Set\(\[\.\.\.indexedPaths, \.\.\.repositoryDrawingPaths\]\)/);
 });
 
 test("force push requires typed confirmation and intentionally skips the remote merge", () => {

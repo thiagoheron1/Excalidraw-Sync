@@ -365,9 +365,19 @@
       createdAt: folder.createdAt || generatedAt,
       updatedAt: folder.updatedAt || generatedAt,
     }));
-    const files = (Array.isArray(index.files) ? index.files : []).flatMap((file) => {
-      if (!file?.id || !file.path || !scenesByPath[file.path]) return [];
-      const scene = normalizeScene(scenesByPath[file.path]);
+    const indexedFiles = (Array.isArray(index.files) ? index.files : []).filter((file) => file?.id && file.path);
+    const sceneEntries = Object.entries(scenesByPath || {}).filter(([, scene]) => scene);
+    const claimedPaths = new Set();
+    const files = indexedFiles.flatMap((file) => {
+      let scenePath = scenesByPath[file.path] ? file.path : null;
+      if (!scenePath && file.hash) {
+        scenePath = sceneEntries.find(([path, scene]) =>
+          !claimedPaths.has(path) && hashScene(scene) === file.hash,
+        )?.[0] || null;
+      }
+      if (!scenePath) return [];
+      claimedPaths.add(scenePath);
+      const scene = normalizeScene(scenesByPath[scenePath]);
       return [{
         id: file.id,
         folderId: file.folderId || null,
@@ -379,6 +389,72 @@
         updatedAt: file.updatedAt || generatedAt,
       }];
     });
+    const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+    const folderPaths = new Map();
+    const folderPath = (folderId, visited = new Set()) => {
+      const folder = foldersById.get(folderId);
+      if (!folder || visited.has(folder.id)) return "";
+      visited.add(folder.id);
+      return [folderPath(folder.parentId, visited), slugify(folder.name, "untitled-folder")]
+        .filter(Boolean)
+        .join("/");
+    };
+    for (const folder of folders) folderPaths.set(folderPath(folder.id), folder.id);
+    const displayName = (slug, fallback) => {
+      const words = String(slug || "").split(/[-_]+/).filter(Boolean);
+      if (!words.length) return fallback;
+      const acronyms = new Set(["api", "aws", "db", "http", "https", "ui", "url", "ux"]);
+      return words.map((word, index) => {
+        if (acronyms.has(word.toLowerCase())) return word.toUpperCase();
+        return index === 0 ? `${word[0].toUpperCase()}${word.slice(1)}` : word;
+      }).join(" ");
+    };
+    const rootName = sceneEntries[0]?.[0]?.split("/")[0] || "excalidraw";
+    const deletedPaths = new Set((Array.isArray(index.tombstones) ? index.tombstones : [])
+      .filter((item) => item?.kind !== "folder" && item?.entry?.name && timestamp(item.deletedAt) > timestamp(item.restoredAt))
+      .map((item) => {
+        const directory = folderPath(item.entry.folderId) || "unfiled";
+        return `${rootName}/${directory}/${slugify(item.entry.name)}.excalidraw`;
+      }));
+    for (const [path, sceneInput] of sceneEntries) {
+      if (claimedPaths.has(path) || deletedPaths.has(path)) continue;
+      const pathParts = path.split("/").filter(Boolean);
+      const filename = pathParts.pop() || "untitled.excalidraw";
+      pathParts.shift();
+      let parentId = null;
+      let currentFolderPath = "";
+      for (const segment of pathParts) {
+        currentFolderPath = [currentFolderPath, segment].filter(Boolean).join("/");
+        let folderId = folderPaths.get(currentFolderPath);
+        if (!folderId) {
+          folderId = `recovered-folder-${hashString(`${rootName}/${currentFolderPath}`)}`;
+          const recoveredFolder = {
+            id: folderId,
+            parentId,
+            name: displayName(segment, "Recovered folder"),
+            createdAt: generatedAt,
+            updatedAt: generatedAt,
+          };
+          folders.push(recoveredFolder);
+          foldersById.set(folderId, recoveredFolder);
+          folderPaths.set(currentFolderPath, folderId);
+        }
+        parentId = folderId;
+      }
+      const scene = normalizeScene(sceneInput);
+      const filenameSlug = filename.replace(/\.excalidraw$/i, "");
+      files.push({
+        id: `recovered-file-${hashString(path)}`,
+        folderId: parentId,
+        name: displayName(filenameSlug, "Recovered drawing"),
+        pinned: false,
+        scene,
+        hash: hashScene(scene),
+        createdAt: generatedAt,
+        updatedAt: generatedAt,
+      });
+      claimedPaths.add(path);
+    }
     const trash = (Array.isArray(index.tombstones) ? index.tombstones : []).filter((item) => item?.id).map((item) => ({
       kind: item.kind === "folder" ? "folder" : "file",
       deletedAt: item.deletedAt || generatedAt,

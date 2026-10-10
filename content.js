@@ -3289,6 +3289,9 @@
       result.workspace,
       "pull",
     );
+    state.query = "";
+    state.collapsedFolders.clear();
+    state.view = "files";
     ensureWorkspaceHasFile();
     const active = state.workspace.files.find((file) => file.id === state.workspace.activeFileId)
       || state.workspace.files[0];

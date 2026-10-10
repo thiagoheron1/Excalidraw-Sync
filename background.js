@@ -461,6 +461,7 @@ async function githubTree(owner, repo, branch, token) {
     const result = await githubRequest(
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
       token,
+      { cache: "no-store", headers: { "Cache-Control": "no-cache" } },
     );
     return new Map((result.tree || []).filter((item) => item.type === "blob").map((item) => [item.path, item.sha]));
   } catch (error) {
@@ -641,22 +642,42 @@ async function readGitHubWorkspaceSnapshot(repository, rootDirectory, token) {
   const placeholder = ExcalidrawSyncCore.createWorkspace();
   const indexPath = ExcalidrawSyncCore.buildProviderFiles(placeholder, rootDirectory)
     .find((file) => file.id === "workspace-index").path;
+  const tree = await githubTree(owner, repo, branch, token);
+  const rootPrefix = indexPath.split("/").slice(0, -1).join("/");
+  const repositoryDrawingPaths = [...tree.keys()].filter((path) =>
+    path.startsWith(`${rootPrefix}/`) && path.endsWith(".excalidraw"),
+  );
   const response = await getGitHubContent(owner, repo, indexPath, token, branch, { fresh: true });
-  if (!response?.content) return { workspace: null, indexPath, shas: new Map() };
-  const index = JSON.parse(base64ToUtf8(response.content));
+  if (!response?.content && !repositoryDrawingPaths.length) {
+    return { workspace: null, indexPath, shas: new Map(), tree };
+  }
+  const index = response?.content
+    ? JSON.parse(base64ToUtf8(response.content))
+    : {
+        formatVersion: 2,
+        workspaceId: `recovered-workspace-${ExcalidrawSyncCore.hashString(`${owner}/${repo}/${rootPrefix}`)}`,
+        workspaceName: repository.name || "Recovered GitHub drawings",
+        generatedAt: new Date().toISOString(),
+        folders: [],
+        files: [],
+        tombstones: [],
+      };
   const scenes = {};
-  const shas = new Map([[indexPath, response.sha]]);
-  await Promise.all((index.files || []).map(async (file) => {
-    const remote = await getGitHubContent(owner, repo, file.path, token, branch, { fresh: true });
+  const shas = new Map(response?.sha ? [[indexPath, response.sha]] : []);
+  const indexedPaths = (index.files || []).map((file) => file.path).filter(Boolean);
+  const drawingPaths = new Set([...indexedPaths, ...repositoryDrawingPaths]);
+  await Promise.all([...drawingPaths].map(async (path) => {
+    const remote = await getGitHubContent(owner, repo, path, token, branch, { fresh: true });
     if (remote?.content) {
-      scenes[file.path] = JSON.parse(base64ToUtf8(remote.content));
-      shas.set(file.path, remote.sha);
+      scenes[path] = JSON.parse(base64ToUtf8(remote.content));
+      shas.set(path, remote.sha);
     }
   }));
   return {
     workspace: ExcalidrawSyncCore.workspaceFromProviderIndex(index, scenes),
     indexPath,
     shas,
+    tree,
   };
 }
 
@@ -738,7 +759,7 @@ async function githubSync(
       previousPaths = [];
     }
   }
-  const tree = await githubTree(owner, repo, branch, token);
+  const tree = remoteSnapshot.tree || await githubTree(owner, repo, branch, token);
   for (const [path, expectedSha] of remoteSnapshot.shas) {
     if (tree.get(path) !== expectedSha) {
       const error = new Error("GitHub changed while ExcaliSync was preparing this sync.");
